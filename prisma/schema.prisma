@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model CarrierConfig {
+  id            String   @id @default(uuid())
+  shop          String
+  carrierType   String   // "coliship" | "mondial_relay"
+  apiKey        String   // chiffré AES-256
+  apiSecret     String?  // chiffré
+  apiKey2       String?  // API2 MR login — chiffré
+  apiSecret2    String?  // API2 MR password — chiffré
+  accountNumber String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, carrierType])
+}
+
+model Order {
+  id                String      @id @default(uuid())
+  shopifyOrderId    String      @unique
+  shop              String
+  orderNumber       String
+  customerName      String
+  customerEmail     String?
+  shippingAddress   String      // JSON stringifié
+  totalPrice        String
+  currency          String
+  fulfillmentStatus String      @default("unfulfilled")
+  shippingMethod    String?
+  lineItems         String      // JSON stringifié
+  tags              String?
+  note              String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  syncedAt          DateTime    @default(now())
+
+  labels            Label[]
+  fulfillments      Fulfillment[]
+}
+
+model Label {
+  id             String   @id @default(uuid())
+  orderId        String
+  shop           String
+  carrier        String   // "colissimo" | "mondial_relay"
+  trackingNumber String?
+  labelUrl       String?
+  labelData      String?  // base64 PDF
+  parcelNumber   String?
+  relayId        String?
+  relayName      String?
+  relayAddress   String?
+  weight         Float    @default(0.5)
+  status         String   @default("generated") // "generated" | "cancelled"
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  order          Order    @relation(fields: [orderId], references: [id])
+}
+
+model Fulfillment {
+  id                   String   @id @default(uuid())
+  orderId              String
+  shop                 String
+  shopifyFulfillmentId String?
+  trackingNumber       String?
+  carrier              String?
+  status               String   @default("pending") // "pending" | "success" | "failed" | "cancelled"
+  errorMessage         String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  order                Order    @relation(fields: [orderId], references: [id])
+}
