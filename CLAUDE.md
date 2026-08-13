@@ -60,8 +60,22 @@ image and silently skips the `Dockerfile` (and therefore the `prisma
 generate`/`migrate deploy` steps above). Deployed as the `FMCShip` service in
 the `FMCShip` Railway project (same account as the unrelated `fmc-prod-liste`
 app, in its own `peaceful-solace` project) — GitHub-connected auto-deploy
-from `K2FMC/FMCShipp` `main`, Postgres as a sibling service referenced via
+from `K2FMC/FMCShipp` `main`, live at
+`https://fmcship-production.up.railway.app`, Postgres as a sibling service
+referenced via
 `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+
+Two more fixes only surfaced by actually deploying (neither reproduces with
+the pre-existing local `node_modules`, so re-check both after any dependency
+bump):
+- `npm ci` fails with `ERESOLVE` in a clean environment — `@shopify/polaris@13.9.5`'s
+  peer dep is `react@^18.0.0`, the project runs React 19. `.npmrc`
+  (`legacy-peer-deps=true`) is committed but Railway's build snapshot didn't
+  honor it, so the `Dockerfile`'s two `npm ci` calls also pass
+  `--legacy-peer-deps` explicitly — don't rely on `.npmrc` alone there.
+- `server.js` uses `app.use(createRequestHandler(...))`, not
+  `app.all("*", ...)` — Express 5's `path-to-regexp` v7 rejects a bare `"*"`
+  wildcard (`PathError: Missing parameter name`), crashing on every request.
 
 ### Shopify Auth
 
