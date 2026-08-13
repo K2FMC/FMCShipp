@@ -119,6 +119,7 @@ export default function Dashboard() {
                   Aucune commande. Cliquez sur "Synchroniser Shopify" pour importer vos commandes.
                 </Text>
               ) : (
+                <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ borderBottom: "1px solid #e1e3e5" }}>
@@ -163,6 +164,7 @@ export default function Dashboard() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </BlockStack>
           </Card>
