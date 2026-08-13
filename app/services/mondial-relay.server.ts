@@ -7,7 +7,7 @@
 //
 // Namespace SOAP : https://api.mondialrelay.com/
 // Security hash  : MD5(tous les params dans l'ordre du doc + clé privée), uppercase —
-//                    ordre différent par méthode, voir docs/Mondial Relay/security-hash.md
+//                    ordre différent par méthode, voir docs/Mondial-Relay/security-hash.md
 // Lat/lng format : POINT décimal, 7 chiffres (ex: "48.8566700") — jamais de virgule, une
 //                    virgule renvoie STAT=67 (confirmé en direct contre l'API réelle)
 
@@ -165,7 +165,7 @@ export async function searchRelayPoints(params: {
 //              [Taille][Poids][Action][DelaiEnvoi][RayonRecherche][TypeActivite][NombreResultats] + clé)
 // NACE existe dans le schéma WSDL entre TypeActivite et NombreResultats mais n'est jamais
 // envoyé par ce repo — cohérent avec son absence de la formule ci-dessus (voir
-// docs/Mondial Relay/security-hash.md ; si NACE est ajouté un jour, revérifier sa place dans le hash).
+// docs/Mondial-Relay/security-hash.md ; si NACE est ajouté un jour, revérifier sa place dans le hash).
 
 export interface Wsi4SearchFields {
   fields: Record<string, string>;

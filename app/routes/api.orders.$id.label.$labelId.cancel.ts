@@ -4,7 +4,7 @@ import { getShopifyAdmin } from "~/shopify.server";
 import { cancelShopifyFulfillment } from "~/services/orders.server";
 
 // Ni Colissimo ni Mondial Relay n'exposent d'API d'annulation/remboursement d'étiquette
-// (vérifié dans docs/colissimo/methods-reference.md et docs/Mondial Relay/*.md — le
+// (vérifié dans docs/colissimo/methods-reference.md et docs/Mondial-Relay/*.md — le
 // remboursement Colissimo se fait "via account", cf. erreur 30823). Cette route ne peut
 // donc pas rembourser automatiquement : elle marque l'étiquette annulée localement,
 // annule le fulfillment associé (Shopify réel si hors mode test, sinon juste localement),
