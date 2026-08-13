@@ -16,6 +16,16 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// Sans ça, l'admin Shopify refuse d'afficher l'app dans son iframe embarquée
+// (CSP frame-ancestors par défaut du navigateur = same-origin uniquement).
+app.use((req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    `frame-ancestors https://${process.env.SHOPIFY_STORE} https://admin.shopify.com;`
+  );
+  next();
+});
+
 // Express 5 (path-to-regexp v7) rejects a bare "*" — it requires a named wildcard segment
 // (e.g. "*splat"). app.use() sidesteps path parsing entirely and matches every method/path.
 app.use(createRequestHandler({ build: () => import("./build/server/index.js") }));
