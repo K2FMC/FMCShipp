@@ -16,7 +16,9 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-app.all("*", createRequestHandler({ build: () => import("./build/server/index.js") }));
+// Express 5 (path-to-regexp v7) rejects a bare "*" — it requires a named wildcard segment
+// (e.g. "*splat"). app.use() sidesteps path parsing entirely and matches every method/path.
+app.use(createRequestHandler({ build: () => import("./build/server/index.js") }));
 
 app.listen(PORT, () => {
   console.log(`FMCShip running on http://localhost:${PORT}`);
