@@ -1,13 +1,13 @@
 FROM node:20-alpine AS development-dependencies-env
 COPY . /app
 WORKDIR /app
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 FROM node:20-alpine AS production-dependencies-env
 COPY ./package.json package-lock.json prisma.config.ts /app/
 COPY ./prisma /app/prisma
 WORKDIR /app
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --legacy-peer-deps
 RUN npx prisma generate
 
 FROM node:20-alpine AS build-env
