@@ -76,6 +76,12 @@ bump):
 - `server.js` uses `app.use(createRequestHandler(...))`, not
   `app.all("*", ...)` — Express 5's `path-to-regexp` v7 rejects a bare `"*"`
   wildcard (`PathError: Missing parameter name`), crashing on every request.
+- `server.js` serves `build/client` via `express.static` (assets under
+  `/assets` get `immutable`/1y caching; the rest 1h) — without it, CSS/JS/
+  favicon requests fall through to the SSR catch-all and 404, so the page
+  loads as unstyled, non-interactive HTML. `npm run dev` never shows this
+  because Vite's dev server serves assets itself — only a real production
+  build+server exposes it.
 
 ### Shopify Auth
 
