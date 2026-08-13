@@ -20,7 +20,7 @@ import {
   Icon,
   Modal,
 } from "@shopify/polaris";
-import { SearchIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronRightIcon, ChevronDownIcon } from "@shopify/polaris-icons";
 import { useLoaderData, useNavigate, useSearchParams, useFetcher, useRevalidator } from "react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Route } from "./+types/orders";
@@ -69,6 +69,12 @@ interface RelayState {
   error?: string;
 }
 
+interface LineItem {
+  title: string;
+  variantTitle?: string | null;
+  quantity: number;
+}
+
 const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   france: "FR", belgique: "BE", belgium: "BE", espagne: "ES", spain: "ES",
   portugal: "PT", luxembourg: "LU", pays_bas: "NL", netherlands: "NL",
@@ -106,6 +112,22 @@ export default function OrdersPage() {
   });
   const [relayStates, setRelayStates] = useState<Record<string, RelayState>>({});
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(orders);
+
+  // Dépli/repli des articles par commande — la flèche d'en-tête déplie/replie toutes les
+  // commandes de la page courante d'un coup, indépendamment des replis individuels déjà faits.
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+  const allExpanded = orders.length > 0 && orders.every((o) => expandedOrders.has(o.id));
+  function toggleAllExpanded() {
+    setExpandedOrders(allExpanded ? new Set() : new Set(orders.map((o) => o.id)));
+  }
+  function toggleExpanded(orderId: string) {
+    setExpandedOrders((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  }
   const bulkLabelFetcher = useFetcher<{
     results: Array<{ orderId: string; orderNumber?: string; status: string; message?: string; trackingNumber?: string }>;
     summary: { total: number; success: number; skipped: number; error: number };
@@ -333,7 +355,7 @@ export default function OrdersPage() {
 
   const resourceName = { singular: "commande", plural: "commandes" };
 
-  const rowMarkup = orders.map((order, index) => {
+  const rowMarkup = orders.flatMap((order, index) => {
     const addr = (() => { try { return JSON.parse(order.shippingAddress); } catch { return {}; } })();
     const destination = [addr.city, addr.country].filter(Boolean).join(", ");
     const carrier = carrierSelections[order.id] ?? "colissimo";
@@ -343,14 +365,32 @@ export default function OrdersPage() {
     const hasLabel = !!latestLabel;
     const latestFulfillment = order.fulfillments.at(-1);
     const rowTags = (order.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+    const isExpanded = expandedOrders.has(order.id);
+    const lineItems: LineItem[] = (() => {
+      try { return JSON.parse(order.lineItems) as LineItem[]; } catch { return []; }
+    })();
 
-    return (
+    const row = (
       <IndexTable.Row
         id={order.id}
         key={order.id}
         position={index}
         selected={selectedResources.includes(order.id)}
       >
+        {/* Dépli des articles — stopPropagation : sinon le clic remonte jusqu'à la ligne et
+            sélectionne la commande (IndexTable sélectionne au clic sur toute la ligne) */}
+        <IndexTable.Cell>
+          <span onClick={(e) => e.stopPropagation()}>
+            <Button
+              variant="tertiary"
+              size="micro"
+              icon={isExpanded ? ChevronDownIcon : ChevronRightIcon}
+              onClick={() => toggleExpanded(order.id)}
+              accessibilityLabel={isExpanded ? "Masquer les articles" : "Afficher les articles"}
+            />
+          </span>
+        </IndexTable.Cell>
+
         {/* Commande */}
         <IndexTable.Cell>
           <BlockStack gap="050">
@@ -462,16 +502,49 @@ export default function OrdersPage() {
         </IndexTable.Cell>
       </IndexTable.Row>
     );
+
+    if (!isExpanded) return [row];
+
+    const itemsRow = (
+      <IndexTable.Row
+        id={`${order.id}-items`}
+        key={`${order.id}-items`}
+        position={index}
+        rowType="child"
+        hideSelectable
+      >
+        <IndexTable.Cell colSpan={11}>
+          {lineItems.length === 0 ? (
+            <Text as="span" tone="subdued" variant="bodySm">Aucun article</Text>
+          ) : (
+            <BlockStack gap="150">
+              {lineItems.map((li, i) => (
+                <InlineStack key={i} align="space-between">
+                  <Text as="span" variant="bodySm">
+                    {li.title}
+                    {li.variantTitle && <Text as="span" tone="subdued"> — {li.variantTitle}</Text>}
+                  </Text>
+                  <Text as="span" tone="subdued" variant="bodySm">× {li.quantity}</Text>
+                </InlineStack>
+              ))}
+            </BlockStack>
+          )}
+        </IndexTable.Cell>
+      </IndexTable.Row>
+    );
+
+    return [row, itemsRow];
   });
 
-  // Mapping colonne ↔ champ de tri backend (seules ces colonnes sont triables)
+  // Mapping colonne ↔ champ de tri backend (seules ces colonnes sont triables) — décalé de 1
+  // par rapport aux headings ci-dessous à cause de la colonne "flèche" ajoutée en premier.
   const SORT_FIELD_BY_INDEX: Partial<Record<number, SortBy>> = {
-    0: "orderNumber",
-    1: "customerName",
-    3: "totalPrice",
-    8: "createdAt",
+    1: "orderNumber",
+    2: "customerName",
+    4: "totalPrice",
+    9: "createdAt",
   };
-  const sortableColumns = [true, true, false, true, false, false, false, false, true, false];
+  const sortableColumns = [false, true, true, false, true, false, false, false, false, true, false];
   const sortColumnIndex = Object.entries(SORT_FIELD_BY_INDEX).find(([, field]) => field === sortBy)?.[0];
 
   function handleSort(headingIndex: number, direction: "ascending" | "descending") {
@@ -629,6 +702,18 @@ export default function OrdersPage() {
             sortColumnIndex={sortColumnIndex !== undefined ? Number(sortColumnIndex) : undefined}
             onSort={handleSort}
             headings={[
+              {
+                id: "expand-all",
+                title: (
+                  <Button
+                    variant="tertiary"
+                    size="micro"
+                    icon={allExpanded ? ChevronDownIcon : ChevronRightIcon}
+                    onClick={toggleAllExpanded}
+                    accessibilityLabel={allExpanded ? "Masquer les articles de toutes les commandes" : "Afficher les articles de toutes les commandes"}
+                  />
+                ),
+              },
               { title: "Commande" },
               { title: "Client" },
               { title: "Destination" },
