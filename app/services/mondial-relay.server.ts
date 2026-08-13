@@ -12,6 +12,7 @@
 //                    virgule renvoie STAT=67 (confirmé en direct contre l'API réelle)
 
 import { createHash } from "crypto";
+import { toInternationalPhone } from "~/lib/phone.server";
 
 const MR_SOAP_URL = "https://api.mondialrelay.com/Web_Services.asmx";
 const MR_NS = "http://www.mondialrelay.fr/webservice/";
@@ -329,15 +330,6 @@ function pick<T>(obj: Record<string, unknown>, ...keys: string[]): T | undefined
   return undefined;
 }
 
-function toIntlPhone(phone: string | undefined): string {
-  if (!phone) return "";
-  const digits = phone.replace(/\D/g, "");
-  if (phone.startsWith("+")) return phone;
-  if (digits.startsWith("0") && digits.length === 10) return `+33${digits.slice(1)}`;
-  if (digits.length === 9) return `+33${digits}`;
-  return phone;
-}
-
 function escXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
@@ -393,7 +385,7 @@ export async function generateMondialRelayLabel(
           <CountryCode>${senderCountry}</CountryCode>
           <PostCode>${escXml(sender.zip)}</PostCode>
           <City>${escXml(sender.city.toUpperCase())}</City>
-          <MobileNo>${toIntlPhone(sender.phone)}</MobileNo>
+          <MobileNo>${toInternationalPhone(sender.phone, senderCountry) ?? ""}</MobileNo>
         </Address>
       </Sender>
       <Recipient>
@@ -404,7 +396,7 @@ export async function generateMondialRelayLabel(
           <CountryCode>${relayCountry.toUpperCase()}</CountryCode>
           <PostCode>${escXml(recipient.zipCode)}</PostCode>
           <City>${escXml(recipient.city.toUpperCase())}</City>
-          <PhoneNo>${toIntlPhone(recipient.phone)}</PhoneNo>
+          <PhoneNo>${toInternationalPhone(recipient.phone, relayCountry) ?? ""}</PhoneNo>
           <Email>${escXml(recipient.email ?? "")}</Email>
         </Address>
       </Recipient>

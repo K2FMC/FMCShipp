@@ -2,6 +2,15 @@ import type { Route } from "./+types/api.orders.$id.label.colissimo";
 import type { CustomsArticle } from "~/services/colissimo.server";
 import { generateColissimoLabelForOrder, LabelGenerationError } from "~/services/label-generation.server";
 
+function parseCustomsArticles(raw: string | null): CustomsArticle[] | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as CustomsArticle[];
+  } catch {
+    throw new LabelGenerationError("Déclaration douanière invalide (JSON malformé)");
+  }
+}
+
 export async function action({ request, params }: Route.ActionArgs) {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
@@ -19,11 +28,9 @@ export async function action({ request, params }: Route.ActionArgs) {
   const customsShippingAmount = parseFloat(
     ((form.get("customsShippingAmount") as string) ?? "0").replace(",", ".")
   ) || 0;
-  const customsArticles: CustomsArticle[] | undefined = customsArticlesRaw
-    ? JSON.parse(customsArticlesRaw)
-    : undefined;
 
   try {
+    const customsArticles = parseCustomsArticles(customsArticlesRaw);
     const label = await generateColissimoLabelForOrder(orderId, shop, {
       weight,
       productCode,

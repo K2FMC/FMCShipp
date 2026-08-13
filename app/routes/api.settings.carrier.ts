@@ -64,36 +64,32 @@ export async function action({ request }: Route.ActionArgs) {
   }
 
   try {
-    if (!existing) {
-      // Création : apiKey obligatoire
-      await prisma.carrierConfig.create({
-        data: {
-          shop,
-          carrierType: carrier,
-          apiKey: encrypt(apiKey),
-          apiSecret: apiSecret ? encrypt(apiSecret) : null,
-          apiKey2: apiKey2 ? encrypt(apiKey2) : null,
-          apiSecret2: apiSecret2 ? encrypt(apiSecret2) : null,
-          accountNumber: accountNumber || null,
-          senderConfig,
-          isActive: true,
-        },
-      });
-    } else {
-      // Mise à jour : ne toucher aux credentials que s'ils sont fournis
-      await prisma.carrierConfig.update({
-        where: { shop_carrierType: { shop, carrierType: carrier } },
-        data: {
-          ...(apiKey ? { apiKey: encrypt(apiKey) } : {}),
-          ...(apiSecret ? { apiSecret: encrypt(apiSecret) } : {}),
-          ...(apiKey2 ? { apiKey2: encrypt(apiKey2) } : {}),
-          ...(apiSecret2 ? { apiSecret2: encrypt(apiSecret2) } : {}),
-          ...(accountNumber ? { accountNumber } : {}),
-          ...(senderConfig !== null ? { senderConfig } : {}),
-          isActive: true,
-        },
-      });
-    }
+    // upsert (pas findUnique + create/update séparés) : atomique côté DB, insensible à une
+    // double soumission concurrente (double-clic, deux onglets) sur le même transporteur —
+    // l'ancienne version pouvait faire échouer la 2e requête sur la contrainte unique.
+    await prisma.carrierConfig.upsert({
+      where: { shop_carrierType: { shop, carrierType: carrier } },
+      create: {
+        shop,
+        carrierType: carrier,
+        apiKey: encrypt(apiKey),
+        apiSecret: apiSecret ? encrypt(apiSecret) : null,
+        apiKey2: apiKey2 ? encrypt(apiKey2) : null,
+        apiSecret2: apiSecret2 ? encrypt(apiSecret2) : null,
+        accountNumber: accountNumber || null,
+        senderConfig,
+        isActive: true,
+      },
+      update: {
+        ...(apiKey ? { apiKey: encrypt(apiKey) } : {}),
+        ...(apiSecret ? { apiSecret: encrypt(apiSecret) } : {}),
+        ...(apiKey2 ? { apiKey2: encrypt(apiKey2) } : {}),
+        ...(apiSecret2 ? { apiSecret2: encrypt(apiSecret2) } : {}),
+        ...(accountNumber ? { accountNumber } : {}),
+        ...(senderConfig !== null ? { senderConfig } : {}),
+        isActive: true,
+      },
+    });
 
     return Response.json({ success: true });
   } catch (err) {

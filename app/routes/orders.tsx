@@ -198,11 +198,19 @@ export default function OrdersPage() {
       toSearch.push(order);
     }
 
-    toSearch.forEach((order, i) => {
+    // Timeouts annulés au cleanup : sans ça, une revalidation du loader avant la fin de la
+    // salve (bulk-label, un autre relais qui se résout ailleurs sur la page...) relance une
+    // salve concurrente sans annuler l'ancienne — recherches en double, et la réponse la plus
+    // lente peut écraser un match correct avec une réponse obsolète dans setRelayStates.
+    const timeoutIds = toSearch.map((order, i) =>
       setTimeout(() => {
         handleCarrierChange(order.id, "mondial_relay", order.shippingAddress);
-      }, i * 250); // échelonné pour éviter de surcharger l'API Nominatim
-    });
+      }, i * 250) // échelonné pour éviter de surcharger l'API Nominatim
+    );
+
+    return () => {
+      timeoutIds.forEach(clearTimeout);
+    };
   }, [orders]);
 
   function goTo(params: Record<string, string>) {

@@ -42,9 +42,15 @@ export async function mergeLabelsIntoSinglePdf(labels: LabelForMerge[]): Promise
     }
 
     for (const src of sources) {
-      const doc = await PDFDocument.load(src);
-      const pages = await merged.copyPages(doc, doc.getPageIndices());
-      pages.forEach((p) => merged.addPage(p));
+      try {
+        const doc = await PDFDocument.load(src);
+        const pages = await merged.copyPages(doc, doc.getPageIndices());
+        pages.forEach((p) => merged.addPage(p));
+      } catch {
+        // PDF illisible/corrompu pour cette commande — même logique que le fetch
+        // labelUrl ci-dessus : on saute cette pièce plutôt que d'invalider la fusion
+        // pour toutes les autres commandes déjà générées avec succès.
+      }
     }
   }
 
