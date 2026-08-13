@@ -79,9 +79,41 @@ bump):
 
 ### Shopify Auth
 
-This is a **Custom App** using `client_credentials` OAuth 2.0 — **not** an embedded app. `app/shopify.server.ts` handles token acquisition and caches it in-process. It exposes `getShopifyAdmin()` which returns a typed `admin.graphql()` helper targeting API version `2025-10`.
+Server-side Admin API access is a **Custom App** using `client_credentials`
+OAuth 2.0 — `app/shopify.server.ts` handles token acquisition and caches it
+in-process. It exposes `getShopifyAdmin()` which returns a typed
+`admin.graphql()` helper targeting API version `2025-10`. Never use
+`@shopify/shopify-app-react-router`, OAuth redirect flows, or `Session`
+Prisma models for this — API calls stay on `client_credentials` regardless
+of embedding status below.
 
-Never use `@shopify/shopify-app-react-router`, OAuth redirect flows, or `Session` Prisma models. The app is standalone (no app bridge), so `PolarisAppProvider` is used without `appBridge`.
+**Embedded in the Shopify admin UI** (as of this session): the app is
+registered in the Partners Dashboard org "FMC BETTER" (app "FMCShip"), with
+"Intégrer l'application dans l'interface administrateur Shopify" enabled and
+the app URL pointed at the Railway deployment. This only affects how the UI
+*displays* (inside an admin iframe) — it does not add OAuth or session-token
+auth to the API layer above. Two pieces make the iframe render:
+- `app/root.tsx`: root `loader` returns `{ shopifyApiKey:
+  process.env.SHOPIFY_CLIENT_ID }` (the same Client ID as the
+  `client_credentials` custom app — a Shopify Client ID is public by design,
+  not a secret); the `Layout` component reads it via
+  `useRouteLoaderData("root")` and renders `<meta name="shopify-api-key">` +
+  the official App Bridge CDN script (`cdn.shopify.com/shopifycloud/app-bridge.js`)
+  as the first script in `<head>`. Loading it unconditionally is safe — App
+  Bridge 4 no-ops cleanly when the page isn't inside an iframe (e.g. direct
+  Railway URL access).
+- `server.js`: sets `Content-Security-Policy: frame-ancestors https://{SHOPIFY_STORE}
+  https://admin.shopify.com;` on every response — without it the browser
+  refuses to render the app inside the admin iframe.
+
+`PolarisAppProvider` is still used without `appBridge` (the React
+`@shopify/app-bridge-react` package) — deliberately using the newer CDN
+script instead, not the npm package.
+
+**Known gap, deliberately deferred:** the app has no access control of its
+own — the raw Railway URL is fully open with no login, embedded or not.
+Embedding doesn't worsen this (it's pre-existing); adding session-token
+verification is a separate, not-yet-scheduled piece of work.
 
 ### Carrier Integrations
 
