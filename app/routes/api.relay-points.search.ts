@@ -62,9 +62,20 @@ export async function action({ request }: Route.ActionArgs) {
     }
     if (body.address) {
       searches.push(
-        geocodeAddress(`${body.address}, ${country}`).then((coords) =>
-          coords ? tryGPS(coords.lat, coords.lng).then((points) => ({ method: "geocoded", points })) : { method: "geocoded", points: [] }
-        )
+        (async () => {
+          let coords = await geocodeAddress(`${body.address}, ${country}`);
+          // L'adresse complète peut être mal formée (ex: adresses de point relais encodées
+          // par le widget Mondial Relay au checkout Shopify, avec du texte tronqué/parasite —
+          // confirmé sur la commande #2546) et faire échouer Nominatim silencieusement, alors
+          // que le CP+ville seuls géocodent de façon fiable vers le centroïde du code postal —
+          // largement suffisant pour une recherche GPS à 30km de rayon.
+          if (!coords && body.zipCode && body.city) {
+            coords = await geocodeAddress(`${body.zipCode} ${body.city}, ${country}`);
+          }
+          if (!coords) return { method: "geocoded", points: [] };
+          const points = await tryGPS(coords.lat, coords.lng);
+          return { method: "geocoded", points };
+        })()
       );
     }
     if (body.zipCode) {
