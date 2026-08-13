@@ -16,6 +16,15 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// Sans ça, rien sous build/client (CSS Polaris, bundles JS hashés, favicon)
+// n'est servi — tout tombe dans le catch-all SSR ci-dessous et 404, d'où une
+// page qui arrive en HTML nu sans style ni hydration.
+app.use(
+  "/assets",
+  express.static("build/client/assets", { immutable: true, maxAge: "1y" })
+);
+app.use(express.static("build/client", { maxAge: "1h" }));
+
 // Sans ça, l'admin Shopify refuse d'afficher l'app dans son iframe embarquée
 // (CSP frame-ancestors par défaut du navigateur = same-origin uniquement).
 app.use((req, res, next) => {
