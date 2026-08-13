@@ -1,16 +1,11 @@
 import type { Route } from "./+types/api.orders.$id.fulfill";
 import { prisma } from "~/lib/db.server";
-import { getShopifyAdmin } from "~/shopify.server";
-import { createShopifyFulfillment } from "~/services/orders.server";
+import { autoFulfillShopify } from "~/services/label-generation.server";
 
-// Nom affiché au client dans l'email de tracking Shopify — le slug interne
-// ("colissimo" / "mondial_relay") sert ailleurs (getTrackingUrl, filtres) et
-// n'est pas adapté à l'affichage.
-const CARRIER_DISPLAY_NAMES: Record<string, string> = {
-  colissimo: "Colissimo",
-  mondial_relay: "Mondial Relay",
-};
-
+// Le fulfillment se déclenche désormais automatiquement à la génération d'une étiquette
+// (voir autoFulfillShopify dans label-generation.server.ts) — cette route ne sert plus que
+// de filet de secours manuel quand l'auto-fulfillment a échoué (bouton "Créer le
+// fulfillment" dans orders.$id.tsx, visible tant que fulfillmentStatus !== "fulfilled").
 export async function action({ request, params }: Route.ActionArgs) {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
@@ -22,52 +17,15 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   const form = await request.formData();
   const trackingNumber = form.get("trackingNumber") as string;
-  const carrier = (form.get("carrier") as string) ?? "colissimo";
+  const carrier = ((form.get("carrier") as string) ?? "colissimo") as "colissimo" | "mondial_relay";
 
   if (!trackingNumber) {
     return Response.json({ error: "Numéro de suivi requis" }, { status: 400 });
   }
 
-  const fulfillment = await prisma.fulfillment.create({
-    data: {
-      orderId: order.id,
-      shop: order.shop,
-      trackingNumber,
-      carrier,
-      status: "pending",
-    },
-  });
-
-  try {
-    const { admin } = await getShopifyAdmin();
-    const { fulfillmentId } = await createShopifyFulfillment(
-      order.shop,
-      admin,
-      order.shopifyOrderId,
-      trackingNumber,
-      CARRIER_DISPLAY_NAMES[carrier] ?? carrier
-    );
-
-    await prisma.fulfillment.update({
-      where: { id: fulfillment.id },
-      data: { status: "success", shopifyFulfillmentId: fulfillmentId },
-    });
-
-    await prisma.order.update({
-      where: { id: order.id },
-      data: { fulfillmentStatus: "fulfilled" },
-    });
-
-    return Response.json({ success: true, fulfillmentId });
-  } catch (err) {
-    // Le call Shopify a échoué : la commande reste "unfulfilled" pour permettre un nouvel
-    // essai (voir bouton "Créer le fulfillment" dans orders.$id.tsx) — on ne marque
-    // fulfilled localement que si Shopify confirme.
-    const message = err instanceof Error ? err.message : "Erreur inconnue";
-    await prisma.fulfillment.update({
-      where: { id: fulfillment.id },
-      data: { status: "failed" },
-    });
-    return Response.json({ error: `Fulfillment Shopify échoué : ${message}` }, { status: 500 });
+  const result = await autoFulfillShopify(order, trackingNumber, carrier);
+  if (!result.success) {
+    return Response.json({ error: `Fulfillment Shopify échoué : ${result.error}` }, { status: 500 });
   }
+  return Response.json({ success: true, fulfillmentId: result.fulfillmentId });
 }

@@ -10,6 +10,57 @@ import type { CustomsArticle } from "~/services/colissimo.server";
 import { generateMondialRelayLabel } from "~/services/mondial-relay.server";
 import { validateShippingAddress } from "~/lib/address-validation";
 import { toInternationalPhone } from "~/lib/phone.server";
+import { getShopifyAdmin } from "~/shopify.server";
+import { createShopifyFulfillment } from "~/services/orders.server";
+
+// Nom affiché au client dans l'email de tracking Shopify — le slug interne
+// ("colissimo" / "mondial_relay") sert ailleurs (getTrackingUrl, filtres) et
+// n'est pas adapté à l'affichage.
+const CARRIER_DISPLAY_NAMES: Record<string, string> = {
+  colissimo: "Colissimo",
+  mondial_relay: "Mondial Relay",
+};
+
+// Fulfillment Shopify déclenché automatiquement juste après la génération d'une étiquette
+// (mono-commande ET en masse) — plus besoin du clic manuel "Créer le fulfillment". Ne fait
+// jamais planter la génération d'étiquette : l'étiquette est déjà générée (coût réel déjà
+// engagé côté transporteur) donc son échec ne doit jamais dépendre de Shopify. En cas
+// d'échec, le Fulfillment local passe à "failed" et order.fulfillmentStatus reste
+// "unfulfilled" — le bouton manuel de secours (qui appelle cette même fonction, voir
+// api.orders.$id.fulfill.ts) reste disponible pour réessayer.
+export async function autoFulfillShopify(
+  order: { id: string; shop: string; shopifyOrderId: string },
+  trackingNumber: string,
+  carrier: "colissimo" | "mondial_relay"
+): Promise<{ success: true; fulfillmentId: string } | { success: false; error: string }> {
+  const fulfillment = await prisma.fulfillment.create({
+    data: { orderId: order.id, shop: order.shop, trackingNumber, carrier, status: "pending" },
+  });
+
+  try {
+    const { admin } = await getShopifyAdmin();
+    const { fulfillmentId } = await createShopifyFulfillment(
+      order.shop,
+      admin,
+      order.shopifyOrderId,
+      trackingNumber,
+      CARRIER_DISPLAY_NAMES[carrier] ?? carrier
+    );
+
+    await prisma.fulfillment.update({
+      where: { id: fulfillment.id },
+      data: { status: "success", shopifyFulfillmentId: fulfillmentId },
+    });
+    await prisma.order.update({ where: { id: order.id }, data: { fulfillmentStatus: "fulfilled" } });
+
+    return { success: true, fulfillmentId };
+  } catch (err) {
+    await prisma.fulfillment.update({ where: { id: fulfillment.id }, data: { status: "failed" } });
+    const message = err instanceof Error ? err.message : "Erreur inconnue";
+    console.error(`Fulfillment Shopify auto échoué pour la commande ${order.id}:`, message);
+    return { success: false, error: message };
+  }
+}
 
 export class LabelGenerationError extends Error {
   status: number;
@@ -198,7 +249,7 @@ export async function generateColissimoLabelForOrder(
       customsDeclarations,
     });
 
-    return prisma.label.create({
+    const label = await prisma.label.create({
       data: {
         orderId: order.id,
         shop,
@@ -210,6 +261,10 @@ export async function generateColissimoLabelForOrder(
         status: "generated",
       },
     });
+
+    await autoFulfillShopify(order, result.trackingNumber, "colissimo");
+
+    return label;
   } catch (err) {
     if (err instanceof LabelGenerationError) throw err;
     const message = err instanceof Error ? err.message : "Erreur inconnue";
@@ -310,7 +365,7 @@ export async function generateMondialRelayLabelForOrder(
       orderId: order.orderNumber,
     });
 
-    return prisma.label.create({
+    const label = await prisma.label.create({
       data: {
         orderId: order.id,
         shop,
@@ -323,6 +378,10 @@ export async function generateMondialRelayLabelForOrder(
         status: "generated",
       },
     });
+
+    await autoFulfillShopify(order, result.trackingNumber, "mondial_relay");
+
+    return label;
   } catch (err) {
     if (err instanceof LabelGenerationError) throw err;
     const message = err instanceof Error ? err.message : "Erreur inconnue";
