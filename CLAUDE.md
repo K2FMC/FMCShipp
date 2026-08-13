@@ -43,6 +43,26 @@ errors on fields that clearly exist in the schema.
 
 **Route registration:** Every route must be explicitly declared in `app/routes.ts`. After adding a route file, run `npm run typecheck` to generate its `+types/` file — until then, the `import type { Route } from "./+types/..."` will error.
 
+**Deployment (`Dockerfile`):** multi-stage build (Node 20 alpine). Both the
+`production-dependencies-env` stage (whose `node_modules` ships in the final
+image) and `build-env` stage run `npx prisma generate` explicitly — there is
+no `postinstall` hook in `package.json`, so skipping this step ships an image
+that throws `@prisma/client did not initialize` at runtime. The container's
+`CMD` runs `npx prisma migrate deploy` before `npm run start` on every boot,
+so pending migrations apply automatically on deploy/restart — don't remove
+that or schema changes made locally won't reach production. `prisma.config.ts`
+and `prisma/` are copied into both the dependency-install stage and the final
+image (needed by `prisma generate`/`migrate deploy` respectively).
+
+**`railway.json`** pins the Railway builder to `DOCKERFILE` explicitly —
+without it Railway's default Railpack auto-detection builds a plain Node
+image and silently skips the `Dockerfile` (and therefore the `prisma
+generate`/`migrate deploy` steps above). Deployed as the `FMCShip` service in
+the `FMCShip` Railway project (same account as the unrelated `fmc-prod-liste`
+app, in its own `peaceful-solace` project) — GitHub-connected auto-deploy
+from `K2FMC/FMCShipp` `main`, Postgres as a sibling service referenced via
+`DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+
 ### Shopify Auth
 
 This is a **Custom App** using `client_credentials` OAuth 2.0 — **not** an embedded app. `app/shopify.server.ts` handles token acquisition and caches it in-process. It exposes `getShopifyAdmin()` which returns a typed `admin.graphql()` helper targeting API version `2025-10`.
