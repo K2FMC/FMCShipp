@@ -82,6 +82,16 @@ bump):
   loads as unstyled, non-interactive HTML. `npm run dev` never shows this
   because Vite's dev server serves assets itself — only a real production
   build+server exposes it.
+- **`server.js` must never register `express.json()`/`express.urlencoded()`.**
+  Every route in this app reads the request body via `request.formData()` /
+  `request.json()` (the Fetch API `Request` object, inside React Router
+  actions) — never `req.body`. An Express body-parser ahead of
+  `createRequestHandler` drains the body stream first, so by the time React
+  Router constructs its `Request`, the body is already empty — every POST
+  action silently receives empty fields. Surfaced as "Champs obligatoires
+  manquants" when saving Mondial Relay credentials, but it broke every POST
+  route the same way (label generation, fulfillment, notes, etc.) — not
+  reproducible in `npm run dev`, only against a real built server.
 
 ### Shopify Auth
 
