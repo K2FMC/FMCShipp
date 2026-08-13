@@ -62,20 +62,24 @@ export async function action({ request }: Route.ActionArgs) {
     }
     if (body.address) {
       searches.push(
-        (async () => {
-          let coords = await geocodeAddress(`${body.address}, ${country}`);
-          // L'adresse complète peut être mal formée (ex: adresses de point relais encodées
-          // par le widget Mondial Relay au checkout Shopify, avec du texte tronqué/parasite —
-          // confirmé sur la commande #2546) et faire échouer Nominatim silencieusement, alors
-          // que le CP+ville seuls géocodent de façon fiable vers le centroïde du code postal —
-          // largement suffisant pour une recherche GPS à 30km de rayon.
-          if (!coords && body.zipCode && body.city) {
-            coords = await geocodeAddress(`${body.zipCode} ${body.city}, ${country}`);
-          }
-          if (!coords) return { method: "geocoded", points: [] };
-          const points = await tryGPS(coords.lat, coords.lng);
-          return { method: "geocoded", points };
-        })()
+        geocodeAddress(`${body.address}, ${country}`).then((coords) =>
+          coords ? tryGPS(coords.lat, coords.lng).then((points) => ({ method: "geocoded", points })) : { method: "geocoded", points: [] }
+        )
+      );
+    }
+    if (body.zipCode && body.city) {
+      // Géocodage CP+ville seul, systématique (pas juste en repli si l'adresse complète échoue) :
+      // Nominatim peut renvoyer un résultat non-null mais faux pour l'adresse complète — un lieu
+      // "important" sans rapport gagne sur la vraie rue par son score de pertinence (confirmé sur
+      // la commande #2551 : un musée dans un autre arrondissement passe devant la bonne adresse).
+      // Dans ce cas la recherche GPS dérivée de l'adresse complète part du mauvais endroit sans
+      // jamais renvoyer d'erreur — un simple repli "si coords est null" ne suffit donc pas. Le
+      // CP+ville seul géocode de façon fiable vers le centroïde postal, largement suffisant pour
+      // un rayon de recherche GPS de 30km (confirmé sur les commandes #2546 et #2551).
+      searches.push(
+        geocodeAddress(`${body.zipCode} ${body.city}, ${country}`).then((coords) =>
+          coords ? tryGPS(coords.lat, coords.lng).then((points) => ({ method: "geocoded-cp", points })) : { method: "geocoded-cp", points: [] }
+        )
       );
     }
     if (body.zipCode) {
