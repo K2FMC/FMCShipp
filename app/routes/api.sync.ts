@@ -9,7 +9,9 @@ export async function action({ request }: Route.ActionArgs) {
 
   try {
     const { admin, session } = await getShopifyAdmin();
-    const result = await syncShopifyOrders(session.shop, admin);
+    const form = await request.formData().catch(() => null);
+    const full = form?.get("full") === "true";
+    const result = await syncShopifyOrders(session.shop, admin, { full });
     return Response.json({
       success: true,
       message: `${result.newOrders} nouvelles commandes, ${result.updatedOrders} mises à jour.`,

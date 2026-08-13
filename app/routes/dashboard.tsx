@@ -7,20 +7,22 @@ import {
   InlineStack,
   Badge,
   Button,
-  Spinner,
+  Banner,
 } from "@shopify/polaris";
-import { useLoaderData, useFetcher } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator } from "react-router";
+import { useEffect, useRef } from "react";
 import type { Route } from "./+types/dashboard";
 import { prisma } from "~/lib/db.server";
+import { isOrderOpen } from "~/lib/order-status";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const shop = process.env.SHOPIFY_STORE!;
 
   const [totalOrders, unfulfilled, fulfilled, totalLabels] = await Promise.all([
     prisma.order.count({ where: { shop } }),
-    prisma.order.count({ where: { shop, fulfillmentStatus: "unfulfilled" } }),
+    prisma.order.count({ where: { shop, fulfillmentStatus: "unfulfilled", cancelledAt: null, closedAt: null } }),
     prisma.order.count({ where: { shop, fulfillmentStatus: "fulfilled" } }),
-    prisma.label.count({ where: { shop } }),
+    prisma.label.count({ where: { shop, status: { not: "cancelled" } } }),
   ]);
 
   const recentOrders = await prisma.order.findMany({
@@ -34,6 +36,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       totalPrice: true,
       currency: true,
       fulfillmentStatus: true,
+      cancelledAt: true,
+      closedAt: true,
       createdAt: true,
     },
   });
@@ -46,6 +50,27 @@ export default function Dashboard() {
     useLoaderData<typeof loader>();
   const syncFetcher = useFetcher();
   const isSyncing = syncFetcher.state !== "idle";
+  const revalidator = useRevalidator();
+  const prevSyncState = useRef(syncFetcher.state);
+  const hasAutoSynced = useRef(false);
+
+  // Sync incrémental automatique à chaque arrivée sur le tableau de bord (une seule fois
+  // par montage) — rattrape p.ex. les commandes Mondial Relay fulfillies à la main dans le
+  // backend Shopify sans attendre un clic manuel sur "Synchroniser Shopify".
+  useEffect(() => {
+    if (hasAutoSynced.current) return;
+    hasAutoSynced.current = true;
+    syncFetcher.submit({}, { method: "POST", action: "/api/sync" });
+  }, []);
+
+  useEffect(() => {
+    if (prevSyncState.current !== "idle" && syncFetcher.state === "idle") {
+      revalidator.revalidate();
+    }
+    prevSyncState.current = syncFetcher.state;
+  }, [syncFetcher.state]);
+
+  const syncResult = syncFetcher.data as { success?: boolean; message?: string; error?: string } | undefined;
 
   return (
     <Page
@@ -62,13 +87,13 @@ export default function Dashboard() {
         </Button>
       }
     >
-      {syncFetcher.data && (
+      {syncResult && (
         <div style={{ marginBottom: 16 }}>
-          <Card>
-            <Text as="p" tone="success">
-              {(syncFetcher.data as { message?: string }).message ?? "Synchronisation terminée"}
-            </Text>
-          </Card>
+          <Banner tone={syncResult.error ? "critical" : "success"}>
+            {syncResult.error
+              ? `Erreur de sync : ${syncResult.error}`
+              : (syncResult.message ?? "Synchronisation terminée")}
+          </Banner>
         </div>
       )}
 
@@ -129,7 +154,7 @@ export default function Dashboard() {
                           {order.totalPrice} {order.currency}
                         </td>
                         <td style={{ padding: "10px 12px" }}>
-                          <StatusBadge status={order.fulfillmentStatus} />
+                          <StatusBadge status={order.fulfillmentStatus} cancelledAt={order.cancelledAt} closedAt={order.closedAt} />
                         </td>
                         <td style={{ padding: "10px 12px", color: "#6d7175", fontSize: 13 }}>
                           {new Date(order.createdAt).toLocaleDateString("fr-FR")}
@@ -173,7 +198,18 @@ function StatCard({
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({
+  status,
+  cancelledAt,
+  closedAt,
+}: {
+  status: string;
+  cancelledAt: Date | string | null;
+  closedAt: Date | string | null;
+}) {
+  if (!isOrderOpen({ cancelledAt, closedAt }) && status !== "fulfilled") {
+    return <Badge tone="critical">Annulée</Badge>;
+  }
   const map: Record<string, { tone: "success" | "warning" | "info"; label: string }> = {
     fulfilled: { tone: "success", label: "Expédiée" },
     unfulfilled: { tone: "warning", label: "À expédier" },

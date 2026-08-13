@@ -28,6 +28,7 @@ export default function AppLayout() {
 
           <SidebarLink to="/" label="Tableau de bord" icon="📊" />
           <SidebarLink to="/orders" label="Commandes" icon="📦" />
+          <SidebarLink to="/products" label="Produits" icon="🏷️" />
           <SidebarLink to="/settings" label="Paramètres" icon="⚙️" />
         </nav>
 

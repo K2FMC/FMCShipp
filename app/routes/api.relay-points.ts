@@ -1,7 +1,7 @@
 import type { Route } from "./+types/api.relay-points";
 import { prisma } from "~/lib/db.server";
 import { decrypt } from "~/lib/encryption.server";
-import { searchRelayPoints } from "~/services/mondial-relay.server";
+import { searchRelayPointsByCP } from "~/services/mondial-relay.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const shop = process.env.SHOPIFY_STORE!;
@@ -25,7 +25,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const secret = decrypt(config.apiSecret ?? "");
 
   try {
-    const points = await searchRelayPoints({ login, secret, country, zipCode });
+    const points = await searchRelayPointsByCP({ login, secret, country, zipCode });
     return Response.json({ points });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erreur inconnue";

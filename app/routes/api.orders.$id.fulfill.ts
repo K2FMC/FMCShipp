@@ -3,6 +3,14 @@ import { prisma } from "~/lib/db.server";
 import { getShopifyAdmin } from "~/shopify.server";
 import { createShopifyFulfillment } from "~/services/orders.server";
 
+// Nom affiché au client dans l'email de tracking Shopify — le slug interne
+// ("colissimo" / "mondial_relay") sert ailleurs (getTrackingUrl, filtres) et
+// n'est pas adapté à l'affichage.
+const CARRIER_DISPLAY_NAMES: Record<string, string> = {
+  colissimo: "Colissimo",
+  mondial_relay: "Mondial Relay",
+};
+
 export async function action({ request, params }: Route.ActionArgs) {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
@@ -14,7 +22,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   const form = await request.formData();
   const trackingNumber = form.get("trackingNumber") as string;
-  const carrier = (form.get("carrier") as string) ?? "Colissimo";
+  const carrier = (form.get("carrier") as string) ?? "colissimo";
 
   if (!trackingNumber) {
     return Response.json({ error: "Numéro de suivi requis" }, { status: 400 });
@@ -31,18 +39,18 @@ export async function action({ request, params }: Route.ActionArgs) {
   });
 
   try {
-    const { admin, session } = await getShopifyAdmin();
-    const result = await createShopifyFulfillment(
-      session.shop,
+    const { admin } = await getShopifyAdmin();
+    const { fulfillmentId } = await createShopifyFulfillment(
+      order.shop,
       admin,
       order.shopifyOrderId,
       trackingNumber,
-      carrier
+      CARRIER_DISPLAY_NAMES[carrier] ?? carrier
     );
 
     await prisma.fulfillment.update({
       where: { id: fulfillment.id },
-      data: { shopifyFulfillmentId: result.fulfillmentId, status: "success" },
+      data: { status: "success", shopifyFulfillmentId: fulfillmentId },
     });
 
     await prisma.order.update({
@@ -50,15 +58,16 @@ export async function action({ request, params }: Route.ActionArgs) {
       data: { fulfillmentStatus: "fulfilled" },
     });
 
-    return Response.json({ success: true, fulfillmentId: result.fulfillmentId });
+    return Response.json({ success: true, fulfillmentId });
   } catch (err) {
+    // Le call Shopify a échoué : la commande reste "unfulfilled" pour permettre un nouvel
+    // essai (voir bouton "Créer le fulfillment" dans orders.$id.tsx) — on ne marque
+    // fulfilled localement que si Shopify confirme.
     const message = err instanceof Error ? err.message : "Erreur inconnue";
-
     await prisma.fulfillment.update({
       where: { id: fulfillment.id },
-      data: { status: "failed", errorMessage: message },
+      data: { status: "failed" },
     });
-
-    return Response.json({ error: message }, { status: 500 });
+    return Response.json({ error: `Fulfillment Shopify échoué : ${message}` }, { status: 500 });
   }
 }

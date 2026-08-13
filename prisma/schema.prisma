@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model CarrierConfig {
@@ -16,11 +15,37 @@ model CarrierConfig {
   apiKey2       String?  // API2 MR login — chiffré
   apiSecret2    String?  // API2 MR password — chiffré
   accountNumber String?
+  senderConfig  String?  // JSON : infos expéditeur (non chiffré)
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@unique([shop, carrierType])
+}
+
+// Une ligne par shop : suit la dernière synchro Shopify réussie pour permettre
+// un sync incrémental (updated_at:>=lastSyncedAt) au lieu de tout re-fetcher.
+model SyncState {
+  shop         String    @id
+  lastSyncedAt DateTime?
+  updatedAt    DateTime  @updatedAt
+}
+
+// Catalogue produit — évite de ressaisir les infos douane (HS code, description,
+// poids) à la main sur chaque commande internationale pour un même SKU.
+model Product {
+  id            String   @id @default(uuid())
+  shop          String
+  sku           String
+  description   String?
+  weight        Float?   // kg
+  hsCode        String?
+  originCountry String   @default("FR")
+  unitValue     String?  // EUR
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, sku])
 }
 
 model Order {
@@ -34,10 +59,16 @@ model Order {
   totalPrice        String
   currency          String
   fulfillmentStatus String      @default("unfulfilled")
+  cancelledAt       DateTime?   // date d'annulation côté Shopify, null si non annulée
+  closedAt          DateTime?   // date de clôture côté Shopify (ex: remboursée puis archivée), null si ouverte
   shippingMethod    String?
+  mrRelay           String?     // JSON du RelayPoint résolu (Mondial Relay) — cache pour éviter
+                                 // de re-chercher/re-matcher à chaque reload de page
+  mrRelayMatchedAt  DateTime?   // quand mrRelay a été résolu (auto-match confiant ou choix manuel)
   lineItems         String      // JSON stringifié
   tags              String?
-  note              String?
+  note              String?     // note Shopify, lecture seule
+  internalNote      String?     // note interne, locale uniquement — jamais resynchronisée vers Shopify
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
   syncedAt          DateTime    @default(now())
@@ -53,30 +84,55 @@ model Label {
   carrier        String   // "colissimo" | "mondial_relay"
   trackingNumber String?
   labelUrl       String?
-  labelData      String?  // base64 PDF
+  labelData      String?  // base64 PDF étiquette
+  cn23Data       String?  // base64 PDF CN23 (déclaration douanière)
   parcelNumber   String?
   relayId        String?
   relayName      String?
   relayAddress   String?
   weight         Float    @default(0.5)
   status         String   @default("generated") // "generated" | "cancelled"
+  batchId        String?  // renseigné si générée via la génération en masse (api.orders.bulk-label.ts)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  order          Order    @relation(fields: [orderId], references: [id])
+  order          Order       @relation(fields: [orderId], references: [id])
+  batch          LabelBatch? @relation(fields: [batchId], references: [id])
+}
+
+// Regroupe les étiquettes générées en une seule fois via la génération en masse — permet de
+// retrouver/re-télécharger le PDF fusionné (étiquettes + récap commandes/articles) plus tard,
+// depuis n'importe quelle commande faisant partie du lot.
+model LabelBatch {
+  id        String   @id @default(uuid())
+  shop      String
+  mergedPdf String?  // base64 PDF fusionné (voir app/services/label-merge.server.ts)
+  createdAt DateTime @default(now())
+
+  labels    Label[]
 }
 
 model Fulfillment {
-  id                   String   @id @default(uuid())
+  id                   String    @id @default(uuid())
   orderId              String
   shop                 String
   shopifyFulfillmentId String?
   trackingNumber       String?
+  trackingUrl          String?   // URL de suivi fournie par Shopify (trackingInfo.url) — fiable,
+                                  // pas devinée depuis le nom du transporteur (voir app/lib/tracking.ts)
+  deliveryStatus       String?   // Fulfillment.displayStatus Shopify (DELIVERED, IN_TRANSIT, etc.)
+                                  // — null si inconnu/jamais remonté par le transporteur
+  inTransitAt          DateTime? // Shopify Fulfillment.inTransitAt
+  deliveredAt          DateTime? // Shopify Fulfillment.deliveredAt
+  estimatedDeliveryAt  DateTime? // Shopify Fulfillment.estimatedDeliveryAt
+  trackingEvents       String?   // JSON stringifié : historique Fulfillment.events (le plus précis
+                                  // que Shopify expose — status/message/date/ville par étape, pas
+                                  // toujours peuplé selon le transporteur/l'intégration d'origine)
   carrier              String?
-  status               String   @default("pending") // "pending" | "success" | "failed" | "cancelled"
+  status               String    @default("pending") // "pending" | "success" | "failed" | "cancelled"
   errorMessage         String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
-  order                Order    @relation(fields: [orderId], references: [id])
+  order                Order     @relation(fields: [orderId], references: [id])
 }

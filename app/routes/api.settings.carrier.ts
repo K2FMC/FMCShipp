@@ -17,32 +17,83 @@ export async function action({ request }: Route.ActionArgs) {
   const apiSecret2 = form.get("apiSecret2") as string | null;
   const accountNumber = form.get("accountNumber") as string | null;
 
-  if (!carrier || !apiKey) {
+  // Infos expéditeur (Mondial Relay uniquement)
+  const senderName = form.get("senderName") as string | null;
+  const senderAddress = form.get("senderAddress") as string | null;
+  const senderZip = form.get("senderZip") as string | null;
+  const senderCity = form.get("senderCity") as string | null;
+  const senderCountry = (form.get("senderCountry") as string | null) || "FR";
+  const senderPhone = form.get("senderPhone") as string | null;
+  const senderEori = form.get("senderEori") as string | null;
+  const collectionRelay = form.get("collectionRelay") as string | null;
+
+  let senderConfig: string | null = null;
+  if (carrier === "mondial_relay" && senderName) {
+    senderConfig = JSON.stringify({
+      name: senderName,
+      address: senderAddress || "",
+      zip: senderZip || "",
+      city: senderCity || "",
+      country: senderCountry,
+      phone: senderPhone || "",
+      collectionRelay: collectionRelay || "",
+    });
+  } else if (carrier === "coliship" && senderName) {
+    senderConfig = JSON.stringify({
+      companyName: senderName,
+      address: senderAddress || "",
+      zip: senderZip || "",
+      city: senderCity || "",
+      country: senderCountry || "FR",
+      phone: senderPhone || "",
+      ...(senderEori ? { eori: senderEori } : {}),
+    });
+  }
+
+  if (!carrier) {
     return Response.json({ error: "Champs obligatoires manquants" }, { status: 400 });
   }
 
+  // Mise à jour partielle : si apiKey absent, on met à jour seulement le senderConfig
+  const existing = await prisma.carrierConfig.findUnique({
+    where: { shop_carrierType: { shop, carrierType: carrier } },
+  });
+
+  if (!apiKey && !existing) {
+    return Response.json({ error: "Enseigne requise pour la création" }, { status: 400 });
+  }
+
   try {
-    await prisma.carrierConfig.upsert({
-      where: { shop_carrierType: { shop, carrierType: carrier } },
-      create: {
-        shop,
-        carrierType: carrier,
-        apiKey: encrypt(apiKey),
-        apiSecret: apiSecret ? encrypt(apiSecret) : null,
-        apiKey2: apiKey2 ? encrypt(apiKey2) : null,
-        apiSecret2: apiSecret2 ? encrypt(apiSecret2) : null,
-        accountNumber: accountNumber || null,
-        isActive: true,
-      },
-      update: {
-        apiKey: encrypt(apiKey),
-        apiSecret: apiSecret ? encrypt(apiSecret) : null,
-        apiKey2: apiKey2 ? encrypt(apiKey2) : null,
-        apiSecret2: apiSecret2 ? encrypt(apiSecret2) : null,
-        accountNumber: accountNumber || null,
-        isActive: true,
-      },
-    });
+    if (!existing) {
+      // Création : apiKey obligatoire
+      await prisma.carrierConfig.create({
+        data: {
+          shop,
+          carrierType: carrier,
+          apiKey: encrypt(apiKey),
+          apiSecret: apiSecret ? encrypt(apiSecret) : null,
+          apiKey2: apiKey2 ? encrypt(apiKey2) : null,
+          apiSecret2: apiSecret2 ? encrypt(apiSecret2) : null,
+          accountNumber: accountNumber || null,
+          senderConfig,
+          isActive: true,
+        },
+      });
+    } else {
+      // Mise à jour : ne toucher aux credentials que s'ils sont fournis
+      await prisma.carrierConfig.update({
+        where: { shop_carrierType: { shop, carrierType: carrier } },
+        data: {
+          ...(apiKey ? { apiKey: encrypt(apiKey) } : {}),
+          ...(apiSecret ? { apiSecret: encrypt(apiSecret) } : {}),
+          ...(apiKey2 ? { apiKey2: encrypt(apiKey2) } : {}),
+          ...(apiSecret2 ? { apiSecret2: encrypt(apiSecret2) } : {}),
+          ...(accountNumber ? { accountNumber } : {}),
+          ...(senderConfig !== null ? { senderConfig } : {}),
+          isActive: true,
+        },
+      });
+    }
 
     return Response.json({ success: true });
   } catch (err) {
