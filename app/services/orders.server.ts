@@ -408,11 +408,15 @@ export async function createShopifyFulfillment(
   trackingNumber: string,
   carrier: string
 ): Promise<{ fulfillmentId: string }> {
-  // Récupère le fulfillmentOrder ID (nécessaire pour la mutation)
+  // Récupère le fulfillmentOrder ID (nécessaire pour la mutation).
+  // Après une annulation de fulfillment, Shopify FERME le fulfillment order
+  // d'origine (status CLOSED) et en crée un nouveau (OPEN) pour les articles
+  // restants. Il faut donc lister tous les fulfillment orders et prendre
+  // celui qui est encore expédiable, pas simplement le premier.
   const foResponse = await adminClient.graphql(
     `query GetFulfillmentOrder($id: ID!) {
       order(id: $id) {
-        fulfillmentOrders(first: 1) {
+        fulfillmentOrders(first: 20) {
           edges { node { id status } }
         }
       }
@@ -424,8 +428,19 @@ export async function createShopifyFulfillment(
     data: { order: { fulfillmentOrders: { edges: Array<{ node: { id: string; status: string } }> } } };
   };
 
-  const fulfillmentOrderId = foJson.data.order.fulfillmentOrders.edges[0]?.node.id;
+  const fulfillmentOrders = foJson.data.order.fulfillmentOrders.edges.map((e) => e.node);
+  // Statuts expédiables via fulfillmentCreateV2 : OPEN / IN_PROGRESS / SCHEDULED.
+  // CLOSED / CANCELLED / INCOMPLETE / ON_HOLD ne le sont pas.
+  const FULFILLABLE = new Set(["OPEN", "IN_PROGRESS", "SCHEDULED"]);
+  const fulfillmentOrderId = fulfillmentOrders.find((fo) => FULFILLABLE.has(fo.status))?.id;
   if (!fulfillmentOrderId) {
+    if (fulfillmentOrders.length) {
+      throw new Error(
+        `Aucun fulfillment order expédiable pour cette commande (statuts trouvés : ${fulfillmentOrders
+          .map((fo) => fo.status)
+          .join(", ")}). La commande est peut-être déjà expédiée ou fermée dans Shopify.`
+      );
+    }
     throw new Error(
       "Aucun fulfillment order trouvé — vérifiez que la commande est bien assignée à un lieu d'expédition dans Shopify."
     );
