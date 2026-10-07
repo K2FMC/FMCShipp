@@ -19,6 +19,7 @@ export default [
   route("api/orders/:id/relay", "routes/api.orders.$id.relay.ts"),
   route("api/orders/:id/note", "routes/api.orders.$id.note.ts"),
   route("api/orders/:id/label/:labelId/cancel", "routes/api.orders.$id.label.$labelId.cancel.ts"),
+  route("api/labels/:labelId/pdf", "routes/api.labels.$labelId.pdf.ts"),
   route("api/products", "routes/api.products.ts"),
   route("api/products/:id", "routes/api.products.$id.ts"),
   route("api/products/sync", "routes/api.products.sync.ts"),

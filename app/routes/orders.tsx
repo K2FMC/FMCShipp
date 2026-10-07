@@ -25,7 +25,7 @@ import { useLoaderData, useNavigate, useSearchParams, useFetcher, useRevalidator
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Route } from "./+types/orders";
 import { getLocalOrders, getDistinctTags } from "~/services/orders.server";
-import type { SortBy, SortOrder, OrderView } from "~/services/orders.server";
+import type { SortBy, SortOrder, OrderView, ShippedSource } from "~/services/orders.server";
 import { isOrderOpen } from "~/lib/order-status";
 import { getTrackingUrl } from "~/lib/tracking";
 
@@ -37,6 +37,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const [ordersResult, availableTags] = await Promise.all([
     getLocalOrders(shop, {
       view: (p.get("view") as OrderView | undefined) ?? undefined,
+      shippedSource: (p.get("source") as ShippedSource | undefined) || undefined,
       shippingMethod: p.get("method") ?? undefined,
       carrier: (p.get("carrier") as "colissimo" | "mondial_relay" | undefined) || undefined,
       search: p.get("q") ?? undefined,
@@ -94,6 +95,7 @@ export default function OrdersPage() {
   const q = searchParams.get("q") ?? "";
   const view = searchParams.get("view") ?? "";
   const tag = searchParams.get("tag") ?? "";
+  const shippedSource = searchParams.get("source") ?? "";
   const carrierFilter = searchParams.get("carrier") ?? "";
   const productTitle = searchParams.get("productTitle") ?? "";
   const variantTitle = searchParams.get("variantTitle") ?? "";
@@ -129,7 +131,15 @@ export default function OrdersPage() {
     });
   }
   const bulkLabelFetcher = useFetcher<{
-    results: Array<{ orderId: string; orderNumber?: string; status: string; message?: string; trackingNumber?: string }>;
+    results: Array<{
+      orderId: string;
+      orderNumber?: string;
+      status: string;
+      message?: string;
+      trackingNumber?: string;
+      labelId?: string;
+      hasCn23?: boolean;
+    }>;
     summary: { total: number; success: number; skipped: number; error: number };
     mergedPdf: string | null;
   }>();
@@ -161,7 +171,8 @@ export default function OrdersPage() {
   );
   function handleTabSelect(index: number) {
     const tabId = viewTabs[index].id;
-    goTo({ view: tabId === "all" ? "" : tabId, page: "1" });
+    // "source" n'a de sens que dans la vue Expédiée — on le retire en changeant d'onglet
+    goTo({ view: tabId === "all" ? "" : tabId, source: "", page: "1" });
   }
 
   // Autocomplete variante produit — connecté au catalogue Shopify (pas notre catalogue local
@@ -620,6 +631,20 @@ export default function OrdersPage() {
                 onChange={(v) => goTo({ carrier: v, page: "1" })}
               />
             </div>
+            {view === "shipped" && (
+              <div style={{ minWidth: 200 }}>
+                <Select
+                  label="Expédiée par"
+                  options={[
+                    { label: "Toutes", value: "" },
+                    { label: "Cette application", value: "app" },
+                    { label: "Ailleurs (ShipStation, Shopify…)", value: "external" },
+                  ]}
+                  value={shippedSource}
+                  onChange={(v) => goTo({ source: v, page: "1" })}
+                />
+              </div>
+            )}
             {availableTags.length > 0 && (
               <div style={{ minWidth: 160 }}>
                 <Select
@@ -642,6 +667,28 @@ export default function OrdersPage() {
             <BlockStack gap="200">
               {bulkLabelFetcher.data.mergedPdf && (
                 <Button onClick={() => setMergedPdfModalOpen(true)}>Voir les étiquettes fusionnées</Button>
+              )}
+              {/* Accès à chaque étiquette individuelle, en plus du PDF fusionné du lot */}
+              {bulkLabelFetcher.data.results.some((r) => r.status === "success" && r.labelId) && (
+                <BlockStack gap="100">
+                  {bulkLabelFetcher.data.results
+                    .filter((r) => r.status === "success" && r.labelId)
+                    .map((r) => (
+                      <InlineStack key={r.orderId} gap="200" blockAlign="center">
+                        <Text as="span" variant="bodySm">
+                          {r.orderNumber ?? r.orderId} — {r.trackingNumber ?? "—"}
+                        </Text>
+                        <Link url={`/api/labels/${r.labelId}/pdf`} target="_blank">
+                          Étiquette
+                        </Link>
+                        {r.hasCn23 && (
+                          <Link url={`/api/labels/${r.labelId}/pdf?doc=cn23`} target="_blank">
+                            CN23
+                          </Link>
+                        )}
+                      </InlineStack>
+                    ))}
+                </BlockStack>
               )}
               <BlockStack gap="100">
                 {bulkLabelFetcher.data.results

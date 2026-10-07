@@ -284,8 +284,18 @@ export type SortOrder = "asc" | "desc";
 // - "shipped" : marquée expédiée (fulfillmentStatus === "fulfilled")
 export type OrderView = "none" | "labeled" | "shipped";
 
+// Sous-filtre de la vue "shipped" — qui a géré l'expédition :
+// - "app"      : expédiée via cette app (au moins une étiquette active générée ici — les
+//                Label ne sont créés que par nos routes de génération)
+// - "external" : expédiée ailleurs (ShipStation avant la bascule, admin Shopify à la main...)
+//                — aucune étiquette active de notre côté
+// Basé sur Label plutôt que Fulfillment : la sync réécrit Fulfillment.carrier depuis
+// trackingInfo.company, et importe aussi les fulfillments créés hors app — pas un marqueur fiable.
+export type ShippedSource = "app" | "external";
+
 export interface OrderQueryOptions {
   view?: OrderView;
+  shippedSource?: ShippedSource;
   shippingMethod?: string;
   carrier?: "colissimo" | "mondial_relay";
   search?: string;
@@ -308,6 +318,7 @@ function jsonStringValue(s: string): string {
 export async function getLocalOrders(shop: string, options: OrderQueryOptions = {}) {
   const {
     view,
+    shippedSource,
     shippingMethod,
     carrier,
     search,
@@ -332,6 +343,8 @@ export async function getLocalOrders(shop: string, options: OrderQueryOptions = 
   const where = {
     shop,
     ...(view === "shipped" ? { fulfillmentStatus: "fulfilled" } : {}),
+    ...(view === "shipped" && shippedSource === "app" ? hasActiveLabel : {}),
+    ...(view === "shipped" && shippedSource === "external" ? noActiveLabel : {}),
     ...(view === "labeled" ? { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null, ...hasActiveLabel } : {}),
     ...(view === "none" ? { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null, ...noActiveLabel } : {}),
     ...(shippingMethod ? { shippingMethod } : {}),

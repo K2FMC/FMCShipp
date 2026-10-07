@@ -311,7 +311,7 @@ export default function OrderDetail() {
     }
   }, [cancelLabelFetcher.state, cancelLabelFetcher.data]);
 
-  type LabelFetcherData = { success?: boolean; error?: string; label?: { labelData?: string; cn23Data?: string; trackingNumber?: string } };
+  type LabelFetcherData = { success?: boolean; error?: string; label?: { id?: string; labelData?: string; cn23Data?: string; trackingNumber?: string } };
   const labelFetcherData = labelFetcher.data as LabelFetcherData | undefined;
   const labelError = labelFetcherData?.error;
   const fulfillError = (fulfillFetcher.data as { error?: string } | undefined)?.error;
@@ -320,6 +320,9 @@ export default function OrderDetail() {
   const displayLabelData = labelFetcherData?.label?.labelData ?? latestLabel?.labelData ?? null;
   const displayCn23Data = labelFetcherData?.label?.cn23Data ?? latestLabel?.cn23Data ?? null;
   const displayTrackingNumber = labelFetcherData?.label?.trackingNumber ?? latestLabel?.trackingNumber ?? null;
+  // Mondial Relay n'a pas de base64 (PDF distant labelUrl) → servi via /api/labels/:id/pdf
+  const displayLabelId = labelFetcherData?.label?.id ?? latestLabel?.id ?? null;
+  const labelPdfRoute = displayLabelId && !displayLabelData ? `/api/labels/${displayLabelId}/pdf` : null;
 
   const hasCn23 = Boolean(displayCn23Data);
   const docTabs = hasCn23
@@ -648,14 +651,16 @@ export default function OrderDetail() {
                         >
                           {hasCn23 ? "Voir les documents" : "Voir l'étiquette"}
                         </Button>
-                        {displayLabelData && (
+                        {displayLabelData ? (
                           <Button
                             url={`data:application/pdf;base64,${displayLabelData}`}
                             download={`etiquette-${order.orderNumber}.pdf`}
                           >
                             Télécharger
                           </Button>
-                        )}
+                        ) : labelPdfRoute ? (
+                          <Button url={`${labelPdfRoute}?download=1`}>Télécharger</Button>
+                        ) : null}
                         {displayCn23Data && (
                           <Button
                             url={`data:application/pdf;base64,${displayCn23Data}`}
@@ -856,6 +861,16 @@ export default function OrderDetail() {
                         >
                           {label.status}
                         </Badge>
+                        {(label.labelData || label.labelUrl) && (
+                          <Button size="slim" variant="tertiary" url={`/api/labels/${label.id}/pdf`} target="_blank">
+                            Étiquette
+                          </Button>
+                        )}
+                        {label.cn23Data && (
+                          <Button size="slim" variant="tertiary" url={`/api/labels/${label.id}/pdf?doc=cn23`} target="_blank">
+                            CN23
+                          </Button>
+                        )}
                         {label.status !== "cancelled" && (
                           <Button
                             size="slim"
@@ -891,7 +906,10 @@ export default function OrderDetail() {
           content: "Télécharger PDF",
           onAction: () => {
             const link = document.createElement("a");
-            link.href = `data:application/pdf;base64,${activeDocData}`;
+            link.href =
+              !activeDocData && !isCn23Tab && labelPdfRoute
+                ? `${labelPdfRoute}?download=1`
+                : `data:application/pdf;base64,${activeDocData}`;
             link.download = activeDocFilename;
             document.body.appendChild(link);
             link.click();
@@ -912,6 +930,13 @@ export default function OrderDetail() {
               src={`data:application/pdf;base64,${activeDocData}`}
               style={{ width: "100%", height: "560px", border: "none", display: "block" }}
               title={isCn23Tab ? "Aperçu CN23" : "Aperçu bordereau"}
+            />
+          ) : !isCn23Tab && labelPdfRoute ? (
+            <iframe
+              key={labelPdfRoute}
+              src={labelPdfRoute}
+              style={{ width: "100%", height: "560px", border: "none", display: "block" }}
+              title="Aperçu bordereau"
             />
           ) : (
             <div style={{ padding: 20 }}>

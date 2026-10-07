@@ -19,6 +19,8 @@ interface BulkResult {
   status: "success" | "skipped" | "error";
   message?: string;
   trackingNumber?: string;
+  labelId?: string; // pour accéder à l'étiquette individuelle (/api/labels/:labelId/pdf)
+  hasCn23?: boolean;
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -59,6 +61,8 @@ export async function action({ request }: Route.ActionArgs) {
         orderNumber,
         status: "success",
         trackingNumber: label.trackingNumber ?? undefined,
+        labelId: label.id,
+        hasCn23: !!label.cn23Data,
       });
       generatedLabels.push({
         labelId: label.id,
