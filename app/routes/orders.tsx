@@ -411,6 +411,14 @@ export default function OrdersPage() {
             >
               {order.orderNumber}
             </button>
+            {/* Signalement ouvert venu d'une autre app FMC (ex. réclamation par mail) */}
+            {order.signals.length > 0 && (
+              <Tooltip content={order.signals[0].summary}>
+                <Badge tone="critical" size="small">
+                  {order.signals.length > 1 ? `Réclamation (${order.signals.length})` : "Réclamation"}
+                </Badge>
+              </Tooltip>
+            )}
             {rowTags.length > 0 && (
               <InlineStack gap="100">
                 {rowTags.map((t) => (

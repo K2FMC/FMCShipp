@@ -235,6 +235,24 @@ order shipped locally. `api.orders.$id.label.$labelId.cancel.ts` already branche
 `shopifyFulfillmentId !== "test-mode"` for cancellation — that check is now effectively always
 true for new fulfillments; the `"test-mode"` id only appears on pre-cutover historical rows.
 
+### Inbound signals (other FMC backend apps)
+
+`POST /api/inbound/signals` (`app/routes/api.inbound.signals.ts`) lets other FMC
+backend services attach a signal to an order — currently only `kind: "complaint"`,
+pushed by `mail_automation` (sibling repo `../mail_automation`, `src/fmcship.js`)
+when Claude detects a customer complaint in a Gmail thread. It's the **only**
+authenticated route in the app: `Authorization: Bearer $INBOUND_API_KEY`
+(timing-safe compare; 503 if the env var is unset). Stored in `OrderSignal`,
+upserted on `(source, externalId)` (= Gmail thread id), so a new message in the
+same thread updates and re-opens the signal. Order matching: cited order number
+only if its `customerEmail` matches the sender (prevents flagging someone else's
+order), else the customer's most recent order; unmatched signals keep
+`orderId: null` and get linked by the sync when the order is first created.
+Open signals show as a "Réclamation" badge in the orders list; the order detail
+page lists them with a "Marquer comme traitée" action
+(`api.orders.$id.signals.$signalId.resolve.ts`). New integrations should reuse
+this endpoint (add a `kind`) rather than adding a new one.
+
 ### Debug Routes
 
 Three routes exist for testing without writing to the DB:
@@ -252,4 +270,6 @@ SHOPIFY_CLIENT_SECRET
 ENCRYPTION_SECRET      32-char key for AES-256 carrier credentials
 PORT                   (optional, default 3000)
 COLISSIMO_SANDBOX      set to "true" to hit the v2.0 sandbox instead of prod
+INBOUND_API_KEY        shared secret for POST /api/inbound/signals (same value as
+                       FMCSHIP_API_KEY in mail_automation)
 ```

@@ -216,6 +216,28 @@ export async function syncShopifyOrders(
         });
         localOrderId = created.id;
         newOrders++;
+
+        // Signalement reçu (api.inbound.signals.ts) avant que la commande ne soit synchronisée :
+        // on le rattache maintenant, par n° de commande cité (si l'email concorde) ou par email.
+        await prisma.orderSignal.updateMany({
+          where: {
+            shop,
+            orderId: null,
+            OR: [
+              {
+                orderNumber: node.name,
+                OR: [
+                  { customerEmail: null },
+                  { customerEmail: { equals: node.email ?? "", mode: "insensitive" } },
+                ],
+              },
+              ...(node.email
+                ? [{ orderNumber: null, customerEmail: { equals: node.email, mode: "insensitive" as const } }]
+                : []),
+            ],
+          },
+          data: { orderId: created.id, orderNumber: node.name },
+        });
       }
 
       // Rattrape le suivi/statut de livraison des commandes fulfill directement dans Shopify
@@ -389,7 +411,11 @@ export async function getLocalOrders(shop: string, options: OrderQueryOptions = 
       orderBy: { [sortBy]: sortOrder },
       skip: (page - 1) * pageSize,
       take: pageSize,
-      include: { labels: true, fulfillments: true },
+      include: {
+        labels: true,
+        fulfillments: true,
+        signals: { where: { status: "open" }, orderBy: { updatedAt: "desc" } },
+      },
     }),
     prisma.order.count({ where }),
   ]);

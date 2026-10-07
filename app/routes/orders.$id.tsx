@@ -31,6 +31,7 @@ export async function loader({ params }: Route.LoaderArgs) {
     include: {
       labels: { include: { batch: { include: { _count: { select: { labels: true } } } } } },
       fulfillments: true,
+      signals: { orderBy: { updatedAt: "desc" } },
     },
   });
   if (!order) throw data("Commande introuvable", { status: 404 });
@@ -146,6 +147,7 @@ export default function OrderDetail() {
   const orderTags = (order.tags ?? "").split(",").map((t) => t.trim()).filter(Boolean);
   const [internalNote, setInternalNote] = useState(order.internalNote ?? "");
   const noteFetcher = useFetcher();
+  const resolveSignalFetcher = useFetcher();
 
   function handleSaveNote() {
     noteFetcher.submit(
@@ -399,6 +401,56 @@ export default function OrderDetail() {
                 )}
               </BlockStack>
             </Card>
+
+            {/* Signalements venus des autres apps FMC (ex. réclamation détectée par mail) */}
+            {order.signals.length > 0 && (
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Réclamations</Text>
+                  <Divider />
+                  {order.signals.map((signal) => (
+                    <BlockStack key={signal.id} gap="150">
+                      <InlineStack align="space-between" blockAlign="center" gap="200">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone={signal.status === "open" ? "critical" : undefined}>
+                            {signal.status === "open" ? "À traiter" : "Traitée"}
+                          </Badge>
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {signal.source === "mail" ? "Mail" : signal.source} — mis à jour le{" "}
+                            {new Date(signal.updatedAt).toLocaleDateString("fr-FR")}
+                          </Text>
+                        </InlineStack>
+                        <InlineStack gap="200" blockAlign="center">
+                          {signal.link && (
+                            <Button size="slim" variant="tertiary" url={signal.link} target="_blank">
+                              {signal.source === "mail" ? "Ouvrir le mail" : "Ouvrir"}
+                            </Button>
+                          )}
+                          {signal.status === "open" && (
+                            <Button
+                              size="slim"
+                              onClick={() =>
+                                resolveSignalFetcher.submit(
+                                  {},
+                                  { method: "POST", action: `/api/orders/${order.id}/signals/${signal.id}/resolve` }
+                                )
+                              }
+                              loading={
+                                resolveSignalFetcher.state !== "idle" &&
+                                resolveSignalFetcher.formAction === `/api/orders/${order.id}/signals/${signal.id}/resolve`
+                              }
+                            >
+                              Marquer comme traitée
+                            </Button>
+                          )}
+                        </InlineStack>
+                      </InlineStack>
+                      <Text as="p" variant="bodySm">{signal.summary}</Text>
+                    </BlockStack>
+                  ))}
+                </BlockStack>
+              </Card>
+            )}
 
             {/* Notes */}
             <Card>

@@ -75,6 +75,7 @@ model Order {
 
   labels            Label[]
   fulfillments      Fulfillment[]
+  signals           OrderSignal[]
 }
 
 model Label {
@@ -135,4 +136,30 @@ model Fulfillment {
   updatedAt            DateTime  @updatedAt
 
   order                Order     @relation(fields: [orderId], references: [id])
+}
+
+// Signalement poussé par une autre app backend FMC (POST /api/inbound/signals) — ex. une
+// réclamation client détectée par mail_automation. Un signalement par fil/objet source
+// (source + externalId) : un nouveau message dans le même fil met à jour et ré-ouvre le
+// signalement existant au lieu d'en créer un nouveau.
+model OrderSignal {
+  id            String    @id @default(uuid())
+  shop          String
+  orderId       String?   // null si aucune commande locale ne correspond (pas encore synchronisée…)
+  source        String    // "mail" — app émettrice
+  externalId    String    // id côté source (ex. id du fil Gmail)
+  kind          String    // "complaint"
+  summary       String
+  link          String?   // lien vers l'objet source (ex. le fil Gmail)
+  customerEmail String?
+  orderNumber   String?   // n° de commande cité par la source, tel que reçu
+  status        String    @default("open") // "open" | "resolved"
+  resolvedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  order         Order?    @relation(fields: [orderId], references: [id])
+
+  @@unique([source, externalId])
+  @@index([orderId, status])
 }
