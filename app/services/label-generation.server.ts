@@ -49,7 +49,7 @@ export async function autoFulfillShopify(
 
     await prisma.fulfillment.update({
       where: { id: fulfillment.id },
-      data: { status: "success", shopifyFulfillmentId: fulfillmentId },
+      data: { status: "success", shopifyFulfillmentId: fulfillmentId, shippedAt: new Date() },
     });
     await prisma.order.update({ where: { id: order.id }, data: { fulfillmentStatus: "fulfilled" } });
 

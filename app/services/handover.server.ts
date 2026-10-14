@@ -1,15 +1,18 @@
-// Vérifie qu'une étiquette générée a réellement été remise au transporteur (1er scan),
-// pour repérer les bordereaux imprimés mais jamais collés/déposés — la commande est
-// marquée expédiée dans Shopify dès la génération, donc rien d'autre ne le signale.
+// Vérifie qu'un colis expédié (fulfillment Shopify avec n° de suivi) a réellement été remis
+// au transporteur (1er scan), pour repérer les bordereaux imprimés mais jamais collés/déposés
+// — la commande est marquée expédiée dès la création du fulfillment, donc rien d'autre ne le
+// signale. Basé sur Fulfillment (pas Label) : couvre aussi les étiquettes créées hors app
+// (admin Shopify, site Colissimo…), que la sync importe comme Fulfillment.
 //
 // Colissimo     → API Suivi v2 La Poste (Okapi), LAPOSTE_OKAPI_KEY. Les événements "DR*"
 //                 (déclaratif réceptionné = étiquette créée) ne comptent pas comme une remise ;
 //                 tout autre code (PC1 "pris en charge", ET*, DI*…) oui.
-// Mondial Relay → suivi Shopify (fulfillment events), interrogé directement plutôt que via
-//                 la sync (une mise à jour de suivi ne bumpe pas forcément updated_at de la
+// Mondial Relay → events du fulfillment Shopify, interrogés directement plutôt que via la
+//                 sync (une mise à jour de suivi ne bumpe pas forcément updated_at de la
 //                 commande). L'API1 WSI2_TracingColisDetaille renvoie STAT=99 pour tous nos
 //                 colis (hash validé : un hash faux donne bien STAT=97) — inutilisable.
 //                 "CONFIRMED" = "en attente de remise au transporteur", donc pas une remise.
+// Autres transporteurs (UPS…) : ignorés.
 
 import { prisma } from "~/lib/db.server";
 import type { ShopifyAdmin } from "~/shopify.server";
@@ -32,38 +35,49 @@ const MR_HANDED_OVER_STATUSES = new Set([
   "FAILURE",
 ]);
 
-const ORDER_FULFILLMENTS_QUERY = `
-  query OrderFulfillments($ids: [ID!]!) {
+const FULFILLMENTS_QUERY = `
+  query HandoverFulfillments($ids: [ID!]!) {
     nodes(ids: $ids) {
-      ... on Order {
+      ... on Fulfillment {
         id
-        fulfillments(first: 10) {
-          inTransitAt
-          trackingInfo { number }
-          events(first: 50, sortKey: HAPPENED_AT) {
-            edges { node { status happenedAt } }
-          }
+        createdAt
+        status
+        inTransitAt
+        events(first: 50, sortKey: HAPPENED_AT) {
+          edges { node { status happenedAt } }
         }
       }
     }
   }
 `;
 
-// Étiquettes actives vérifiées au moins une fois, sans scan, échéance (24h ouvrées) dépassée —
-// même règle que getHandoverState() côté client ("overdue").
-export function overdueLabelWhere(now: Date = new Date()) {
-  return {
-    status: "generated",
-    handedOverAt: null,
-    trackingCheckedAt: { not: null },
-    createdAt: { gte: new Date(now.getTime() - HANDOVER_WINDOW_MS), lte: handoverCutoff(now) },
-  };
+// Fulfillment.carrier = trackingInfo.company Shopify, texte libre ("Colissimo",
+// "Colissimo One Balance™", "La Poste Colissimo", "Mondial Relay"…) — ou "colissimo" /
+// "mondial_relay" sur une ligne créée par l'app avant la sync suivante.
+export function handoverCarrier(carrier: string | null): "colissimo" | "mondial_relay" | null {
+  const c = (carrier ?? "").toLowerCase();
+  if (c.includes("colissimo")) return "colissimo";
+  if (c.includes("mondial")) return "mondial_relay";
+  return null;
 }
 
-interface PendingLabel {
-  id: string;
-  trackingNumber: string | null;
-  order: { shopifyOrderId: string };
+const TRACKED_CARRIER_FILTER = {
+  OR: [
+    { carrier: { contains: "colissimo", mode: "insensitive" as const } },
+    { carrier: { contains: "mondial", mode: "insensitive" as const } },
+  ],
+};
+
+// Fulfillments vérifiés au moins une fois, sans scan, échéance (24h ouvrées) dépassée —
+// même règle que getHandoverState() côté client ("overdue").
+export function overdueFulfillmentWhere(now: Date = new Date()) {
+  return {
+    status: "success",
+    handedOverAt: null,
+    trackingCheckedAt: { not: null },
+    shippedAt: { gte: new Date(now.getTime() - HANDOVER_WINDOW_MS), lte: handoverCutoff(now) },
+    ...TRACKED_CARRIER_FILTER,
+  };
 }
 
 type CheckResult = { handedOverAt: Date | null } | { error: string };
@@ -75,61 +89,122 @@ export interface HandoverCheckSummary {
   skipped: string[];
 }
 
-// Un seul passage à la fois (déclenché par l'intervalle de server.js et par la sync manuelle).
+// Un seul passage à la fois (déclenché par l'intervalle de server.js, ou à la main).
 let running: Promise<HandoverCheckSummary> | null = null;
 
-export function checkLabelHandovers(shop: string, admin: ShopifyAdmin): Promise<HandoverCheckSummary> {
+export function checkHandovers(shop: string, admin: ShopifyAdmin): Promise<HandoverCheckSummary> {
   running ??= runCheck(shop, admin).finally(() => {
     running = null;
   });
   return running;
 }
 
+interface ShopifyFulfillmentNode {
+  id: string;
+  createdAt: string;
+  status: string;
+  inTransitAt: string | null;
+  events: { edges: Array<{ node: { status: string | null; happenedAt: string } }> };
+}
+
 async function runCheck(shop: string, admin: ShopifyAdmin): Promise<HandoverCheckSummary> {
-  const labels = await prisma.label.findMany({
+  const windowStart = new Date(Date.now() - HANDOVER_WINDOW_MS);
+  const candidates = await prisma.fulfillment.findMany({
     where: {
       shop,
-      status: "generated",
+      status: "success",
       handedOverAt: null,
       trackingNumber: { not: null },
-      createdAt: { gte: new Date(Date.now() - HANDOVER_WINDOW_MS) },
+      shopifyFulfillmentId: { startsWith: "gid://" }, // exclut les lignes "test-mode"
+      order: { cancelledAt: null },
+      // shippedAt null : ligne antérieure à ce champ — createdAt local en approximation
+      // pour la sélection, la vraie date Shopify est récupérée ci-dessous.
+      OR: [{ shippedAt: { gte: windowStart } }, { shippedAt: null, createdAt: { gte: windowStart } }],
+      AND: [TRACKED_CARRIER_FILTER],
     },
-    select: { id: true, carrier: true, trackingNumber: true, order: { select: { shopifyOrderId: true } } },
+    select: { id: true, carrier: true, trackingNumber: true, shopifyFulfillmentId: true },
   });
 
   const summary: HandoverCheckSummary = { checked: 0, handedOver: 0, errors: 0, skipped: [] };
-  const record = async (labelId: string, result: CheckResult) => {
-    if ("error" in result) {
-      summary.errors++;
-      console.error(`[handover] label ${labelId}: ${result.error}`);
-      return;
-    }
-    summary.checked++;
-    if (result.handedOverAt) summary.handedOver++;
-    await prisma.label.update({
-      where: { id: labelId },
-      data: { trackingCheckedAt: new Date(), handedOverAt: result.handedOverAt },
-    });
-  };
-
-  const colissimo = labels.filter((l) => l.carrier === "colissimo");
-  const mondialRelay = labels.filter((l) => l.carrier === "mondial_relay");
-
   const okapiKey = process.env.LAPOSTE_OKAPI_KEY;
-  if (colissimo.length && !okapiKey) {
-    summary.skipped.push(`Colissimo : LAPOSTE_OKAPI_KEY manquante (${colissimo.length} étiquette(s) non vérifiée(s))`);
-  } else {
-    for (const label of colissimo) {
-      await record(label.id, await checkColissimo(label.trackingNumber!, okapiKey!));
-      await new Promise((r) => setTimeout(r, OKAPI_MIN_INTERVAL_MS));
+  let okapiSkipped = 0;
+
+  const BATCH = 50;
+  for (let i = 0; i < candidates.length; i += BATCH) {
+    const batch = candidates.slice(i, i + BATCH);
+
+    let nodes: Map<string, ShopifyFulfillmentNode>;
+    try {
+      nodes = await fetchShopifyFulfillments(admin, batch.map((f) => f.shopifyFulfillmentId!));
+    } catch (err) {
+      summary.errors += batch.length;
+      console.error(`[handover] Shopify: ${err instanceof Error ? err.message : err}`);
+      continue;
+    }
+
+    for (const f of batch) {
+      const node = nodes.get(f.shopifyFulfillmentId!);
+      if (!node || node.status !== "SUCCESS") continue; // annulé côté Shopify, la sync corrigera
+      const shippedAt = new Date(node.createdAt);
+      if (shippedAt < windowStart) {
+        await prisma.fulfillment.update({ where: { id: f.id }, data: { shippedAt } });
+        continue;
+      }
+
+      // Shopify suit parfois aussi Colissimo (rarement) — un scan déjà connu évite l'appel Okapi.
+      const shopifyScan = firstShopifyScan(node);
+      let result: CheckResult;
+      if (handoverCarrier(f.carrier) === "mondial_relay" || shopifyScan) {
+        result = { handedOverAt: shopifyScan };
+      } else if (!okapiKey) {
+        okapiSkipped++;
+        await prisma.fulfillment.update({ where: { id: f.id }, data: { shippedAt } });
+        continue;
+      } else {
+        result = await checkColissimo(f.trackingNumber!, okapiKey);
+        await new Promise((r) => setTimeout(r, OKAPI_MIN_INTERVAL_MS));
+      }
+
+      if ("error" in result) {
+        summary.errors++;
+        console.error(`[handover] fulfillment ${f.id} (${f.trackingNumber}): ${result.error}`);
+        await prisma.fulfillment.update({ where: { id: f.id }, data: { shippedAt } });
+        continue;
+      }
+      summary.checked++;
+      if (result.handedOverAt) summary.handedOver++;
+      await prisma.fulfillment.update({
+        where: { id: f.id },
+        data: { shippedAt, trackingCheckedAt: new Date(), handedOverAt: result.handedOverAt },
+      });
     }
   }
 
-  for (const [labelId, result] of await checkMondialRelay(mondialRelay, admin)) {
-    await record(labelId, result);
+  if (okapiSkipped) {
+    summary.skipped.push(`Colissimo : LAPOSTE_OKAPI_KEY manquante (${okapiSkipped} colis non vérifié(s))`);
   }
-
   return summary;
+}
+
+async function fetchShopifyFulfillments(admin: ShopifyAdmin, ids: string[]): Promise<Map<string, ShopifyFulfillmentNode>> {
+  const res = await admin.graphql(FULFILLMENTS_QUERY, { variables: { ids } });
+  if (!res.ok) throw new Error(`GraphQL ${res.status}`);
+  const json = (await res.json()) as {
+    data?: { nodes: Array<ShopifyFulfillmentNode | null> };
+    errors?: unknown[];
+  };
+  if (json.errors?.length) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors).slice(0, 200)}`);
+  return new Map((json.data?.nodes ?? []).filter((n): n is ShopifyFulfillmentNode => !!n?.id).map((n) => [n.id, n]));
+}
+
+function firstShopifyScan(node: ShopifyFulfillmentNode): Date | null {
+  const dates = [
+    ...(node.inTransitAt ? [node.inTransitAt] : []),
+    ...node.events.edges
+      .filter((e) => e.node.status && MR_HANDED_OVER_STATUSES.has(e.node.status))
+      .map((e) => e.node.happenedAt),
+  ].map((d) => new Date(d).getTime());
+  return dates.length ? new Date(Math.min(...dates)) : null;
 }
 
 async function checkColissimo(parcelNumber: string, apiKey: string): Promise<CheckResult> {
@@ -153,56 +228,4 @@ async function checkColissimo(parcelNumber: string, apiKey: string): Promise<Che
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
-}
-
-async function checkMondialRelay(labels: PendingLabel[], admin: ShopifyAdmin): Promise<Map<string, CheckResult>> {
-  const results = new Map<string, CheckResult>();
-  const BATCH = 50;
-
-  for (let i = 0; i < labels.length; i += BATCH) {
-    const batch = labels.slice(i, i + BATCH);
-    const ids = [...new Set(batch.map((l) => l.order.shopifyOrderId))];
-    try {
-      const res = await admin.graphql(ORDER_FULFILLMENTS_QUERY, { variables: { ids } });
-      if (!res.ok) throw new Error(`GraphQL ${res.status}`);
-      const json = (await res.json()) as {
-        data?: {
-          nodes: Array<{
-            id: string;
-            fulfillments: Array<{
-              inTransitAt: string | null;
-              trackingInfo: Array<{ number: string | null }>;
-              events: { edges: Array<{ node: { status: string | null; happenedAt: string } }> };
-            }>;
-          } | null>;
-        };
-        errors?: unknown[];
-      };
-      if (json.errors?.length) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors).slice(0, 200)}`);
-
-      const ordersById = new Map((json.data?.nodes ?? []).filter((n) => n?.id).map((n) => [n!.id, n!]));
-      for (const label of batch) {
-        const fulfillment = ordersById
-          .get(label.order.shopifyOrderId)
-          ?.fulfillments.find((f) => f.trackingInfo.some((t) => t.number === label.trackingNumber));
-        if (!fulfillment) {
-          // Pas (encore) de fulfillment Shopify portant ce numéro — rien à lire, pas remis.
-          results.set(label.id, { handedOverAt: null });
-          continue;
-        }
-        const scanDates = [
-          ...(fulfillment.inTransitAt ? [fulfillment.inTransitAt] : []),
-          ...fulfillment.events.edges
-            .filter((e) => e.node.status && MR_HANDED_OVER_STATUSES.has(e.node.status))
-            .map((e) => e.node.happenedAt),
-        ].map((d) => new Date(d).getTime());
-        results.set(label.id, { handedOverAt: scanDates.length ? new Date(Math.min(...scanDates)) : null });
-      }
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      for (const label of batch) results.set(label.id, { error });
-    }
-  }
-
-  return results;
 }

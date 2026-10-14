@@ -804,6 +804,7 @@ export default function OrderDetail() {
                     return (
                       <BlockStack gap="200">
                         <Text as="p" tone="success">Commande expédiée ✓</Text>
+                        {latestFulfillment && <HandoverStatus fulfillment={latestFulfillment} />}
                         {trackingUrl && trackingNumber && (
                           <Button url={trackingUrl} target="_blank">
                             Suivre le colis — {trackingNumber}
@@ -895,12 +896,9 @@ export default function OrderDetail() {
                     const batchLabelCount: number = batch?._count.labels ?? 0;
                     return (
                     <InlineStack key={label.id} align="space-between" blockAlign="center">
-                      <BlockStack gap="050">
-                        <Text as="span" variant="bodySm">
-                          {label.carrier} — {label.trackingNumber ?? "—"}
-                        </Text>
-                        <HandoverStatus label={label} />
-                      </BlockStack>
+                      <Text as="span" variant="bodySm">
+                        {label.carrier} — {label.trackingNumber ?? "—"}
+                      </Text>
                       <InlineStack gap="200" blockAlign="center">
                         {batch && batchLabelCount > 1 && (
                           <Button
@@ -1123,30 +1121,35 @@ interface RelayPoint {
 
 // Remise au transporteur (1er scan) — vérifiée toutes les 2h, voir app/services/handover.server.ts
 function HandoverStatus({
-  label,
+  fulfillment,
 }: {
-  label: { status: string; createdAt: Date | string; handedOverAt: Date | string | null; trackingCheckedAt: Date | string | null };
+  fulfillment: {
+    status: string;
+    shippedAt: Date | string | null;
+    handedOverAt: Date | string | null;
+    trackingCheckedAt: Date | string | null;
+  };
 }) {
-  const state = getHandoverState(label);
+  const state = getHandoverState(fulfillment);
   if (state === "handed_over") {
     return (
-      <Text as="span" variant="bodySm" tone="success">
-        Remis au transporteur le {new Date(label.handedOverAt!).toLocaleString("fr-FR")}
+      <Text as="p" variant="bodySm" tone="success">
+        Remis au transporteur le {new Date(fulfillment.handedOverAt!).toLocaleString("fr-FR")}
       </Text>
     );
   }
   if (state === "overdue") {
     return (
-      <Text as="span" variant="bodySm" tone="critical">
+      <Text as="p" variant="bodySm" tone="critical">
         ⚠ Jamais scanné par le transporteur (attendu avant le{" "}
-        {handoverDeadline(label.createdAt).toLocaleString("fr-FR")}) — bordereau collé et colis déposé ?
+        {handoverDeadline(fulfillment.shippedAt!).toLocaleString("fr-FR")}) — bordereau collé et colis déposé ?
       </Text>
     );
   }
   if (state === "pending") {
     return (
-      <Text as="span" variant="bodySm" tone="subdued">
-        En attente de prise en charge (avant le {handoverDeadline(label.createdAt).toLocaleString("fr-FR")})
+      <Text as="p" variant="bodySm" tone="subdued">
+        En attente de prise en charge (avant le {handoverDeadline(fulfillment.shippedAt!).toLocaleString("fr-FR")})
       </Text>
     );
   }

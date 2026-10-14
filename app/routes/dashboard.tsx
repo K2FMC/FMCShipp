@@ -14,7 +14,7 @@ import { useEffect, useRef } from "react";
 import type { Route } from "./+types/dashboard";
 import { prisma } from "~/lib/db.server";
 import { isOrderOpen } from "~/lib/order-status";
-import { overdueLabelWhere } from "~/services/handover.server";
+import { overdueFulfillmentWhere } from "~/services/handover.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const shop = process.env.SHOPIFY_STORE!;
@@ -24,7 +24,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     prisma.order.count({ where: { shop, fulfillmentStatus: "unfulfilled", cancelledAt: null, closedAt: null } }),
     prisma.order.count({ where: { shop, fulfillmentStatus: "fulfilled" } }),
     prisma.label.count({ where: { shop, status: { not: "cancelled" } } }),
-    prisma.order.count({ where: { shop, cancelledAt: null, labels: { some: overdueLabelWhere() } } }),
+    prisma.order.count({ where: { shop, cancelledAt: null, fulfillments: { some: overdueFulfillmentWhere() } } }),
   ]);
 
   const recentOrders = await prisma.order.findMany({
@@ -106,7 +106,7 @@ export default function Dashboard() {
             title={`${notHandedOver} colis jamais scanné${notHandedOver > 1 ? "s" : ""} par le transporteur`}
             action={{ content: "Voir les commandes", url: "/orders?view=not_handed" }}
           >
-            Étiquette générée il y a plus de 24h ouvrées, sans aucune prise en charge transporteur —
+            Expédié il y a plus de 24h ouvrées, sans aucune prise en charge transporteur —
             bordereau pas collé ou colis pas déposé ?
           </Banner>
         </div>

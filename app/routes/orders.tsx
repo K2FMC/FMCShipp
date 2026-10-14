@@ -421,13 +421,13 @@ export default function OrdersPage() {
                 </Badge>
               </Tooltip>
             )}
-            {/* Étiquette jamais scannée par le transporteur passé 24h ouvrées */}
+            {/* Colis expédié jamais scanné par le transporteur passé 24h ouvrées */}
             {(() => {
-              const overdue = order.labels.find((l) => getHandoverState(l) === "overdue");
-              if (!overdue) return null;
+              const overdue = order.fulfillments.find((f) => getHandoverState(f) === "overdue");
+              if (!overdue?.shippedAt) return null;
               return (
                 <Tooltip
-                  content={`Étiquette du ${new Date(overdue.createdAt).toLocaleString("fr-FR")} jamais scannée — attendue avant le ${handoverDeadline(overdue.createdAt).toLocaleString("fr-FR")}`}
+                  content={`Expédié le ${new Date(overdue.shippedAt).toLocaleString("fr-FR")}, jamais scanné — attendu avant le ${handoverDeadline(overdue.shippedAt).toLocaleString("fr-FR")}`}
                 >
                   <Badge tone="warning" size="small">Non remis</Badge>
                 </Tooltip>

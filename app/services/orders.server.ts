@@ -1,6 +1,6 @@
 import { prisma } from "~/lib/db.server";
 import type { ShopifyAdmin } from "~/shopify.server";
-import { overdueLabelWhere } from "~/services/handover.server";
+import { overdueFulfillmentWhere } from "~/services/handover.server";
 
 // $searchQuery pilote la fenêtre de fetch : "status:any" (tout l'historique,
 // premier sync) ou "status:any updated_at:>=<lastSyncedAt>" (sync incrémental)
@@ -32,6 +32,7 @@ const ORDERS_QUERY = `
           }
           fulfillments(first: 5) {
             id
+            createdAt
             status
             displayStatus
             inTransitAt
@@ -267,6 +268,7 @@ export async function syncShopifyOrders(
           trackingNumber: trackingInfo?.number ?? null,
           trackingUrl: trackingInfo?.url ?? null,
           carrier: trackingInfo?.company ?? null,
+          shippedAt: new Date(f.createdAt),
           deliveryStatus: f.displayStatus ?? null,
           inTransitAt: f.inTransitAt ? new Date(f.inTransitAt) : null,
           deliveredAt: f.deliveredAt ? new Date(f.deliveredAt) : null,
@@ -305,7 +307,7 @@ export type SortOrder = "asc" | "desc";
 // - "none"    : rien fait — pas d'étiquette active, pas expédiée
 // - "labeled" : étiquette générée mais pas encore marquée expédiée
 // - "shipped" : marquée expédiée (fulfillmentStatus === "fulfilled")
-// + "not_handed" (transverse, pas exclusive) : étiquette active jamais scannée par le
+// + "not_handed" (transverse, pas exclusive) : colis expédié jamais scanné par le
 //   transporteur passé 24h ouvrées — voir app/services/handover.server.ts
 export type OrderView = "none" | "labeled" | "shipped" | "not_handed";
 
@@ -372,7 +374,7 @@ export async function getLocalOrders(shop: string, options: OrderQueryOptions = 
     ...(view === "shipped" && shippedSource === "external" ? noActiveLabel : {}),
     ...(view === "labeled" ? { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null, ...hasActiveLabel } : {}),
     ...(view === "none" ? { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null, ...noActiveLabel } : {}),
-    ...(view === "not_handed" ? { cancelledAt: null, labels: { some: overdueLabelWhere() } } : {}),
+    ...(view === "not_handed" ? { cancelledAt: null, fulfillments: { some: overdueFulfillmentWhere() } } : {}),
     ...(shippingMethod ? { shippingMethod } : {}),
     ...(carrier === "mondial_relay" ? mondialRelayFilter : {}),
     ...(carrier === "colissimo" ? { NOT: mondialRelayFilter } : {}),
@@ -593,6 +595,7 @@ interface ShopifyOrder {
   fulfillmentOrders: { edges: Array<{ node: { id: string; status: string } }> };
   fulfillments?: Array<{
     id: string;
+    createdAt: string;
     status: string;
     displayStatus?: string | null;
     inTransitAt?: string | null;
