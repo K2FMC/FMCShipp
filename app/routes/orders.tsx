@@ -505,10 +505,18 @@ export default function OrdersPage() {
                   (latestLabel?.trackingNumber
                     ? getTrackingUrl(latestLabel.carrier, latestLabel.trackingNumber)
                     : null);
+                // <a> natif + stopPropagation : sinon le clic remonte à la ligne de l'IndexTable
+                // (sélection) au lieu d'ouvrir le site du transporteur dans un nouvel onglet.
                 return trackingUrl ? (
-                  <Link url={trackingUrl} target="_blank">
+                  <a
+                    href={trackingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ color: "var(--p-color-text-link)" }}
+                  >
                     Suivi
-                  </Link>
+                  </a>
                 ) : null;
               })()}
             </InlineStack>
