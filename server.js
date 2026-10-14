@@ -48,4 +48,23 @@ app.use(createRequestHandler({ build: () => import("./build/server/index.js") })
 
 app.listen(PORT, () => {
   console.log(`FMCShip running on http://localhost:${PORT}`);
+  scheduleHandoverCheck();
 });
+
+// Vérifie régulièrement que les étiquettes générées ont bien été scannées par le
+// transporteur (voir app/services/handover.server.ts). Passe par la route HTTP plutôt
+// qu'un import direct : le code applicatif n'existe que dans le bundle React Router.
+const HANDOVER_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000;
+function scheduleHandoverCheck() {
+  const run = async () => {
+    try {
+      const res = await fetch(`http://localhost:${PORT}/api/tracking/check`, { method: "POST" });
+      const body = await res.json();
+      console.log("[handover] check:", JSON.stringify(body));
+    } catch (err) {
+      console.error("[handover] check failed:", err);
+    }
+  };
+  setTimeout(run, 60 * 1000);
+  setInterval(run, HANDOVER_CHECK_INTERVAL_MS);
+}

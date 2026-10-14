@@ -94,11 +94,15 @@ model Label {
   weight         Float    @default(0.5)
   status         String   @default("generated") // "generated" | "cancelled"
   batchId        String?  // renseigné si générée via la génération en masse (api.orders.bulk-label.ts)
+  handedOverAt      DateTime? // 1er scan transporteur (colis réellement remis) — voir app/services/handover.server.ts
+  trackingCheckedAt DateTime? // dernière vérification réussie du suivi transporteur (null = jamais vérifiée)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   order          Order       @relation(fields: [orderId], references: [id])
   batch          LabelBatch? @relation(fields: [batchId], references: [id])
+
+  @@index([status, handedOverAt])
 }
 
 // Regroupe les étiquettes générées en une seule fois via la génération en masse — permet de

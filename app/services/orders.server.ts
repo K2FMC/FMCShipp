@@ -1,5 +1,6 @@
 import { prisma } from "~/lib/db.server";
 import type { ShopifyAdmin } from "~/shopify.server";
+import { overdueLabelWhere } from "~/services/handover.server";
 
 // $searchQuery pilote la fenêtre de fetch : "status:any" (tout l'historique,
 // premier sync) ou "status:any updated_at:>=<lastSyncedAt>" (sync incrémental)
@@ -304,7 +305,9 @@ export type SortOrder = "asc" | "desc";
 // - "none"    : rien fait — pas d'étiquette active, pas expédiée
 // - "labeled" : étiquette générée mais pas encore marquée expédiée
 // - "shipped" : marquée expédiée (fulfillmentStatus === "fulfilled")
-export type OrderView = "none" | "labeled" | "shipped";
+// + "not_handed" (transverse, pas exclusive) : étiquette active jamais scannée par le
+//   transporteur passé 24h ouvrées — voir app/services/handover.server.ts
+export type OrderView = "none" | "labeled" | "shipped" | "not_handed";
 
 // Sous-filtre de la vue "shipped" — qui a géré l'expédition :
 // - "app"      : expédiée via cette app (au moins une étiquette active générée ici — les
@@ -369,6 +372,7 @@ export async function getLocalOrders(shop: string, options: OrderQueryOptions = 
     ...(view === "shipped" && shippedSource === "external" ? noActiveLabel : {}),
     ...(view === "labeled" ? { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null, ...hasActiveLabel } : {}),
     ...(view === "none" ? { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null, ...noActiveLabel } : {}),
+    ...(view === "not_handed" ? { cancelledAt: null, labels: { some: overdueLabelWhere() } } : {}),
     ...(shippingMethod ? { shippingMethod } : {}),
     ...(carrier === "mondial_relay" ? mondialRelayFilter : {}),
     ...(carrier === "colissimo" ? { NOT: mondialRelayFilter } : {}),

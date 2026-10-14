@@ -11,6 +11,7 @@ export default [
 
   // API routes
   route("api/sync", "routes/api.sync.ts"),
+  route("api/tracking/check", "routes/api.tracking.check.ts"),
   route("api/orders/:id/label/colissimo", "routes/api.orders.$id.label.colissimo.ts"),
   route("api/orders/:id/label/mondial-relay", "routes/api.orders.$id.label.mondial-relay.ts"),
   route("api/orders/bulk-label", "routes/api.orders.bulk-label.ts"),

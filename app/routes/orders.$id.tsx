@@ -22,6 +22,7 @@ import { prisma } from "~/lib/db.server";
 import { isOrderOpen } from "~/lib/order-status";
 import { getTrackingUrl, translateDeliveryStatus, translateFulfillmentStatus } from "~/lib/tracking";
 import { validateShippingAddress } from "~/lib/address-validation";
+import { getHandoverState, handoverDeadline } from "~/lib/handover";
 import { data } from "react-router";
 
 export async function loader({ params }: Route.LoaderArgs) {
@@ -894,9 +895,12 @@ export default function OrderDetail() {
                     const batchLabelCount: number = batch?._count.labels ?? 0;
                     return (
                     <InlineStack key={label.id} align="space-between" blockAlign="center">
-                      <Text as="span" variant="bodySm">
-                        {label.carrier} — {label.trackingNumber ?? "—"}
-                      </Text>
+                      <BlockStack gap="050">
+                        <Text as="span" variant="bodySm">
+                          {label.carrier} — {label.trackingNumber ?? "—"}
+                        </Text>
+                        <HandoverStatus label={label} />
+                      </BlockStack>
                       <InlineStack gap="200" blockAlign="center">
                         {batch && batchLabelCount > 1 && (
                           <Button
@@ -1115,4 +1119,36 @@ interface RelayPoint {
   city: string;
   zipCode: string;
   country: string;
+}
+
+// Remise au transporteur (1er scan) — vérifiée toutes les 2h, voir app/services/handover.server.ts
+function HandoverStatus({
+  label,
+}: {
+  label: { status: string; createdAt: Date | string; handedOverAt: Date | string | null; trackingCheckedAt: Date | string | null };
+}) {
+  const state = getHandoverState(label);
+  if (state === "handed_over") {
+    return (
+      <Text as="span" variant="bodySm" tone="success">
+        Remis au transporteur le {new Date(label.handedOverAt!).toLocaleString("fr-FR")}
+      </Text>
+    );
+  }
+  if (state === "overdue") {
+    return (
+      <Text as="span" variant="bodySm" tone="critical">
+        ⚠ Jamais scanné par le transporteur (attendu avant le{" "}
+        {handoverDeadline(label.createdAt).toLocaleString("fr-FR")}) — bordereau collé et colis déposé ?
+      </Text>
+    );
+  }
+  if (state === "pending") {
+    return (
+      <Text as="span" variant="bodySm" tone="subdued">
+        En attente de prise en charge (avant le {handoverDeadline(label.createdAt).toLocaleString("fr-FR")})
+      </Text>
+    );
+  }
+  return null;
 }

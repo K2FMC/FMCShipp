@@ -14,15 +14,17 @@ import { useEffect, useRef } from "react";
 import type { Route } from "./+types/dashboard";
 import { prisma } from "~/lib/db.server";
 import { isOrderOpen } from "~/lib/order-status";
+import { overdueLabelWhere } from "~/services/handover.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const shop = process.env.SHOPIFY_STORE!;
 
-  const [totalOrders, unfulfilled, fulfilled, totalLabels] = await Promise.all([
+  const [totalOrders, unfulfilled, fulfilled, totalLabels, notHandedOver] = await Promise.all([
     prisma.order.count({ where: { shop } }),
     prisma.order.count({ where: { shop, fulfillmentStatus: "unfulfilled", cancelledAt: null, closedAt: null } }),
     prisma.order.count({ where: { shop, fulfillmentStatus: "fulfilled" } }),
     prisma.label.count({ where: { shop, status: { not: "cancelled" } } }),
+    prisma.order.count({ where: { shop, cancelledAt: null, labels: { some: overdueLabelWhere() } } }),
   ]);
 
   const recentOrders = await prisma.order.findMany({
@@ -42,11 +44,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     },
   });
 
-  return { totalOrders, unfulfilled, fulfilled, totalLabels, recentOrders };
+  return { totalOrders, unfulfilled, fulfilled, totalLabels, notHandedOver, recentOrders };
 }
 
 export default function Dashboard() {
-  const { totalOrders, unfulfilled, fulfilled, totalLabels, recentOrders } =
+  const { totalOrders, unfulfilled, fulfilled, totalLabels, notHandedOver, recentOrders } =
     useLoaderData<typeof loader>();
   const syncFetcher = useFetcher();
   const isSyncing = syncFetcher.state !== "idle";
@@ -93,6 +95,19 @@ export default function Dashboard() {
             {syncResult.error
               ? `Erreur de sync : ${syncResult.error}`
               : (syncResult.message ?? "Synchronisation terminée")}
+          </Banner>
+        </div>
+      )}
+
+      {notHandedOver > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <Banner
+            tone="warning"
+            title={`${notHandedOver} colis jamais scanné${notHandedOver > 1 ? "s" : ""} par le transporteur`}
+            action={{ content: "Voir les commandes", url: "/orders?view=not_handed" }}
+          >
+            Étiquette générée il y a plus de 24h ouvrées, sans aucune prise en charge transporteur —
+            bordereau pas collé ou colis pas déposé ?
           </Banner>
         </div>
       )}

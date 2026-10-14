@@ -28,6 +28,7 @@ import { getLocalOrders, getDistinctTags } from "~/services/orders.server";
 import type { SortBy, SortOrder, OrderView, ShippedSource } from "~/services/orders.server";
 import { isOrderOpen } from "~/lib/order-status";
 import { getTrackingUrl } from "~/lib/tracking";
+import { getHandoverState, handoverDeadline } from "~/lib/handover";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const shop = process.env.SHOPIFY_STORE!;
@@ -164,6 +165,7 @@ export default function OrdersPage() {
     { id: "none", content: "Rien" },
     { id: "labeled", content: "Étiquette générée" },
     { id: "shipped", content: "Expédiée" },
+    { id: "not_handed", content: "Non remis au transporteur" },
   ];
   const selectedTabIndex = Math.max(
     0,
@@ -419,6 +421,18 @@ export default function OrdersPage() {
                 </Badge>
               </Tooltip>
             )}
+            {/* Étiquette jamais scannée par le transporteur passé 24h ouvrées */}
+            {(() => {
+              const overdue = order.labels.find((l) => getHandoverState(l) === "overdue");
+              if (!overdue) return null;
+              return (
+                <Tooltip
+                  content={`Étiquette du ${new Date(overdue.createdAt).toLocaleString("fr-FR")} jamais scannée — attendue avant le ${handoverDeadline(overdue.createdAt).toLocaleString("fr-FR")}`}
+                >
+                  <Badge tone="warning" size="small">Non remis</Badge>
+                </Tooltip>
+              );
+            })()}
             {rowTags.length > 0 && (
               <InlineStack gap="100">
                 {rowTags.map((t) => (

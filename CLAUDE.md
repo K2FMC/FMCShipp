@@ -235,6 +235,32 @@ order shipped locally. `api.orders.$id.label.$labelId.cancel.ts` already branche
 `shopifyFulfillmentId !== "test-mode"` for cancellation — that check is now effectively always
 true for new fulfillments; the `"test-mode"` id only appears on pre-cutover historical rows.
 
+### Handover check (label printed but parcel never shipped)
+
+Generating a label auto-fulfills the order in Shopify, so a label printed but never
+stuck on / dropped off still shows as shipped. `app/services/handover.server.ts`
+polls carrier tracking for active labels (`status: "generated"`, last 30 days) until
+the first carrier scan, stored as `Label.handedOverAt` (`Label.trackingCheckedAt` =
+last successful check):
+- **Colissimo:** La Poste Suivi v2 (Okapi) — `GET https://api.laposte.fr/suivi/v2/idships/{parcel}`,
+  header `X-Okapi-Key: $LAPOSTE_OKAPI_KEY` (Freemium, 10 req/s). `DR*` event codes
+  (= label declared) are not a handover; any other code is. Missing key ⇒ Colissimo
+  labels are skipped (never flagged).
+- **Mondial Relay:** Shopify fulfillment events/`inTransitAt`, queried directly via
+  `nodes(ids:)` (not via the incremental sync — tracking updates don't reliably bump
+  the order's `updated_at`). `CONFIRMED` means "waiting to be handed over", not a scan.
+  Don't switch to MR API1 `WSI2_TracingColisDetaille`: it returns `STAT=99` for all our
+  parcels (hash verified — a wrong hash gives `STAT=97`).
+
+Triggered every 2h by `server.js` (POST `/api/tracking/check`, first run 1 min after
+boot) — not in `npm run dev`, call the route manually there. A label is "overdue"
+24 **business** hours after creation (weekend-shifted, no public holidays) — logic in
+`app/lib/handover.ts` (client-safe; `handoverCutoff()` is the DB-side inverse of
+`handoverDeadline()`), DB filter `overdueLabelWhere()`. Only labels checked at least once
+are ever flagged. Surfaced as a dashboard banner, the "Non remis au transporteur" tab
+(`view=not_handed`) + "Non remis" badge in the orders list, and per-label status on
+the order page.
+
 ### Inbound signals (other FMC backend apps)
 
 `POST /api/inbound/signals` (`app/routes/api.inbound.signals.ts`) lets other FMC
@@ -270,6 +296,7 @@ SHOPIFY_CLIENT_SECRET
 ENCRYPTION_SECRET      32-char key for AES-256 carrier credentials
 PORT                   (optional, default 3000)
 COLISSIMO_SANDBOX      set to "true" to hit the v2.0 sandbox instead of prod
+LAPOSTE_OKAPI_KEY      La Poste developer key (API Suivi v2) — Colissimo handover check
 INBOUND_API_KEY        shared secret for POST /api/inbound/signals (same value as
                        FMCSHIP_API_KEY in mail_automation)
 ```
