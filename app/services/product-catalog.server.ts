@@ -137,3 +137,50 @@ export async function syncProductCatalogFromShopify(
 
   return result;
 }
+
+// Repli pour les lignes de commande sans correspondance dans le catalogue (variante sans SKU
+// dans Shopify — le catalogue est indexé par SKU) : lit le code HS et le pays d'origine
+// directement sur l'inventoryItem de la variante. Même ordre que Order.lineItems (même
+// connexion lineItems(first: 50) que ORDERS_QUERY).
+const ORDER_LINE_CUSTOMS_QUERY = `
+  query OrderLineCustoms($id: ID!) {
+    order(id: $id) {
+      lineItems(first: 50) {
+        nodes {
+          title
+          variant { inventoryItem { harmonizedSystemCode countryCodeOfOrigin } }
+        }
+      }
+    }
+  }
+`;
+
+export interface LineItemCustoms {
+  title: string;
+  hsCode: string | null;
+  originCountry: string | null;
+}
+
+export async function fetchOrderLineCustoms(
+  admin: ShopifyAdmin,
+  shopifyOrderId: string
+): Promise<LineItemCustoms[]> {
+  const response = await admin.graphql(ORDER_LINE_CUSTOMS_QUERY, { variables: { id: shopifyOrderId } });
+  const json = (await response.json()) as {
+    data?: {
+      order: {
+        lineItems: {
+          nodes: Array<{
+            title: string;
+            variant: { inventoryItem: { harmonizedSystemCode: string | null; countryCodeOfOrigin: string | null } } | null;
+          }>;
+        };
+      } | null;
+    };
+  };
+  return (json.data?.order?.lineItems.nodes ?? []).map((n) => ({
+    title: n.title,
+    hsCode: n.variant?.inventoryItem.harmonizedSystemCode?.trim() || null,
+    originCountry: n.variant?.inventoryItem.countryCodeOfOrigin ?? null,
+  }));
+}

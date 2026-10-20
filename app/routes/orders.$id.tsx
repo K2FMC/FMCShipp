@@ -24,6 +24,8 @@ import { getTrackingUrl, translateDeliveryStatus, translateFulfillmentStatus } f
 import { validateShippingAddress } from "~/lib/address-validation";
 import { getHandoverState, handoverDeadline } from "~/lib/handover";
 import { data } from "react-router";
+import { getShopifyAdmin } from "~/shopify.server";
+import { fetchOrderLineCustoms, type LineItemCustoms } from "~/services/product-catalog.server";
 
 export async function loader({ params }: Route.LoaderArgs) {
   const shop = process.env.SHOPIFY_STORE!;
@@ -52,7 +54,24 @@ export async function loader({ params }: Route.LoaderArgs) {
     : [];
   const productsBySku = Object.fromEntries(catalogProducts.map((p) => [p.sku, p]));
 
-  return { order, shippingAddress, lineItems, shippingCost, productsBySku };
+  // Lignes hors catalogue (variante sans SKU) sur un envoi avec CN23 : code HS / origine lus
+  // directement sur la variante Shopify. Indexé comme lineItems ; null si la ligne ne correspond pas.
+  let shopifyLineCustoms: Array<LineItemCustoms | null> = [];
+  const needsCustoms = !EU_COUNTRIES.has(String(shippingAddress.countryCodeV2 ?? "FR").toUpperCase());
+  const hasUnmatched = (lineItems as LineItem[]).some((li) => !li.sku || !productsBySku[li.sku]);
+  if (needsCustoms && hasUnmatched) {
+    try {
+      const { admin } = await getShopifyAdmin();
+      const fetched = await fetchOrderLineCustoms(admin, order.shopifyOrderId);
+      shopifyLineCustoms = (lineItems as LineItem[]).map((li, i) =>
+        fetched[i]?.title === li.title ? fetched[i] : null
+      );
+    } catch {
+      // Pré-remplissage best-effort : la saisie manuelle reste possible
+    }
+  }
+
+  return { order, shippingAddress, lineItems, shippingCost, productsBySku, shopifyLineCustoms };
 }
 
 const COUNTRY_CODES: Record<string, string> = {
@@ -130,7 +149,7 @@ interface CustomsArticleState {
 }
 
 export default function OrderDetail() {
-  const { order, shippingAddress, lineItems, shippingCost, productsBySku } = useLoaderData<typeof loader>();
+  const { order, shippingAddress, lineItems, shippingCost, productsBySku, shopifyLineCustoms } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const labelFetcher = useFetcher();
   const fulfillFetcher = useFetcher();
@@ -171,14 +190,15 @@ export default function OrderDetail() {
   const [customsShippingAmount, setCustomsShippingAmount] = useState(shippingCost ?? "0");
   // Pré-rempli depuis le catalogue produit (par SKU) quand une correspondance existe
   const [customsArticles, setCustomsArticles] = useState<CustomsArticleState[]>(() =>
-    (lineItems as LineItem[]).map((item) => {
+    (lineItems as LineItem[]).map((item, i) => {
       const product = item.sku ? productsBySku[item.sku] : undefined;
+      const fromShopify = shopifyLineCustoms[i];
       return {
         description: product?.description || item.title,
         quantity: item.quantity,
         unitValue: product?.unitValue || item.unitPrice || "",
-        originCountry: product?.originCountry ?? "FR",
-        hsCode: product?.hsCode ?? "",
+        originCountry: product?.originCountry ?? fromShopify?.originCountry ?? "FR",
+        hsCode: product?.hsCode || fromShopify?.hsCode || "",
       };
     })
   );
