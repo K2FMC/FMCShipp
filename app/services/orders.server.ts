@@ -25,7 +25,7 @@ const ORDERS_QUERY = `
             firstName lastName
           }
           lineItems(first: 50) {
-            edges { node { title variantTitle quantity sku originalUnitPriceSet { shopMoney { amount } } } }
+            edges { node { title variantTitle quantity sku variant { sku } originalUnitPriceSet { shopMoney { amount } } } }
           }
           fulfillmentOrders(first: 1) {
             edges { node { id status assignedLocation { name } } }
@@ -147,7 +147,9 @@ export async function syncShopifyOrders(
           title: e.node.title,
           variantTitle: e.node.variantTitle || null,
           quantity: e.node.quantity,
-          sku: e.node.sku,
+          // SKU actuel de la variante plutôt que celui figé sur la ligne à l'achat (null ou
+          // ancien code si le SKU a été ajouté/renommé depuis) — c'est la clé du catalogue Product.
+          sku: e.node.variant?.sku || e.node.sku || null,
           unitPrice: e.node.originalUnitPriceSet?.shopMoney?.amount ?? null,
         }))
       );
@@ -587,7 +589,8 @@ interface ShopifyOrder {
         title: string;
         variantTitle?: string | null;
         quantity: number;
-        sku?: string;
+        sku?: string | null;
+        variant?: { sku: string | null } | null;
         originalUnitPriceSet?: { shopMoney: { amount: string } };
       };
     }>;
