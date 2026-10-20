@@ -24,7 +24,8 @@ import { SearchIcon, ChevronRightIcon, ChevronDownIcon } from "@shopify/polaris-
 import { useLoaderData, useNavigate, useSearchParams, useFetcher, useRevalidator } from "react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Route } from "./+types/orders";
-import { getLocalOrders, getDistinctTags, getOrderViewCounts, DEFAULT_ORDER_VIEW } from "~/services/orders.server";
+import { getLocalOrders, getDistinctTags, getOrderViewCounts } from "~/services/orders.server";
+import { ORDER_VIEWS, DEFAULT_ORDER_VIEW } from "~/lib/order-views";
 import type { SortBy, SortOrder, OrderView, ShippedSource } from "~/services/orders.server";
 import { isOrderOpen } from "~/lib/order-status";
 import { getTrackingUrl } from "~/lib/tracking";
@@ -57,8 +58,6 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   return { ...ordersResult, availableTags, viewCounts, view };
 }
-
-const ORDER_VIEWS: OrderView[] = ["to_ship", "labeled", "not_handed", "shipped", "cancelled", "all"];
 
 // Pas de paramètre = onglet par défaut ("À expédier"). "none" = ancien identifiant de cet
 // onglet, gardé pour les liens/favoris existants.

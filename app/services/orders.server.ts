@@ -1,6 +1,9 @@
 import { prisma } from "~/lib/db.server";
 import type { ShopifyAdmin } from "~/shopify.server";
 import { overdueFulfillmentWhere } from "~/services/handover.server";
+import { ORDER_VIEWS, DEFAULT_ORDER_VIEW, type OrderView } from "~/lib/order-views";
+
+export type { OrderView };
 
 // $searchQuery pilote la fenêtre de fetch : "status:any" (tout l'historique,
 // premier sync) ou "status:any updated_at:>=<lastSyncedAt>" (sync incrémental)
@@ -304,19 +307,6 @@ export async function syncShopifyOrders(
 export type SortBy = "createdAt" | "orderNumber" | "customerName" | "totalPrice";
 export type SortOrder = "asc" | "desc";
 
-// Onglets de la liste, dans l'ordre du flux de travail. Les 4 premiers états sont
-// mutuellement exclusifs et couvrent toutes les commandes :
-// - "to_ship"   : à traiter — ouverte, pas expédiée, pas d'étiquette active
-// - "labeled"   : étiquette générée, pas encore marquée expédiée (à fulfill / à déposer)
-// - "shipped"   : marquée expédiée (fulfillmentStatus === "fulfilled")
-// - "cancelled" : jamais expédiée et annulée ou clôturée dans Shopify (remboursée, archivée…)
-// + "not_handed" (transverse, sous-ensemble de "shipped") : colis expédié jamais scanné par le
-//   transporteur passé 24h ouvrées — voir app/services/handover.server.ts
-// + "all" : aucune restriction
-export type OrderView = "to_ship" | "labeled" | "not_handed" | "shipped" | "cancelled" | "all";
-
-export const DEFAULT_ORDER_VIEW: OrderView = "to_ship";
-
 const hasActiveLabel = { labels: { some: { status: { not: "cancelled" } } } };
 const noActiveLabel = { labels: { none: { status: { not: "cancelled" } } } };
 const openNotShipped = { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null };
@@ -336,7 +326,7 @@ export function orderViewWhere(view: OrderView) {
 // Compteurs des onglets — indépendants des autres filtres (recherche, transporteur…) : ils
 // indiquent la charge de travail globale par étape.
 export async function getOrderViewCounts(shop: string): Promise<Record<OrderView, number>> {
-  const views: OrderView[] = ["to_ship", "labeled", "not_handed", "shipped", "cancelled", "all"];
+  const views = ORDER_VIEWS;
   const counts = await Promise.all(
     views.map((v) => prisma.order.count({ where: { shop, ...orderViewWhere(v) } }))
   );
