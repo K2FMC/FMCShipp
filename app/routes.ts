@@ -15,6 +15,7 @@ export default [
   route("api/orders/:id/label/colissimo", "routes/api.orders.$id.label.colissimo.ts"),
   route("api/orders/:id/label/mondial-relay", "routes/api.orders.$id.label.mondial-relay.ts"),
   route("api/orders/bulk-label", "routes/api.orders.bulk-label.ts"),
+  route("api/orders/pick-list", "routes/api.orders.pick-list.ts"),
   route("api/orders/:id/fulfill", "routes/api.orders.$id.fulfill.ts"),
   route("api/orders/:id/cancel", "routes/api.orders.$id.cancel.ts"),
   route("api/orders/:id/relay", "routes/api.orders.$id.relay.ts"),

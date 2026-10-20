@@ -19,13 +19,15 @@ import {
   Autocomplete,
   Icon,
   Modal,
+  Thumbnail,
 } from "@shopify/polaris";
-import { SearchIcon, ChevronRightIcon, ChevronDownIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronRightIcon, ChevronDownIcon, ImageIcon } from "@shopify/polaris-icons";
 import { useLoaderData, useNavigate, useSearchParams, useFetcher, useRevalidator } from "react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Route } from "./+types/orders";
 import { getLocalOrders, getDistinctTags, getOrderViewCounts } from "~/services/orders.server";
 import { ORDER_VIEWS, DEFAULT_ORDER_VIEW } from "~/lib/order-views";
+import type { PickListItem } from "./api.orders.pick-list";
 import type { SortBy, SortOrder, OrderView, ShippedSource } from "~/services/orders.server";
 import { isOrderOpen } from "~/lib/order-status";
 import { getTrackingUrl } from "~/lib/tracking";
@@ -606,6 +608,20 @@ export default function OrdersPage() {
     goTo({ sortBy: field, sortOrder: direction === "ascending" ? "asc" : "desc", page: "1" });
   }
 
+  // Confirmation avant génération en masse : liste de préparation (articles à expédier des
+  // commandes sélectionnées, regroupés par variante, avec photo) — voir api.orders.pick-list.ts
+  const pickListFetcher = useFetcher<{ items: PickListItem[]; totalQuantity: number; error?: string }>();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  function openBulkConfirm() {
+    setConfirmOpen(true);
+    pickListFetcher.load(`/api/orders/pick-list?ids=${selectedResources.join(",")}`);
+  }
+  function confirmBulkGenerate() {
+    setConfirmOpen(false);
+    handleBulkGenerate();
+  }
+  const pickListLoading = pickListFetcher.state !== "idle" || !pickListFetcher.data;
+
   function handleBulkGenerate() {
     const payload: Array<{ orderId: string; orderNumber: string; carrier: string }> = selectedResources.map(
       (orderId) => {
@@ -773,16 +789,70 @@ export default function OrdersPage() {
           </Modal.Section>
         </Modal>
 
+        <Modal
+          open={confirmOpen}
+          onClose={() => setConfirmOpen(false)}
+          title={`Expédier ${selectedResources.length} commande${selectedResources.length > 1 ? "s" : ""} ?`}
+          primaryAction={{
+            content: `Confirmer et générer ${selectedResources.length} étiquette${selectedResources.length > 1 ? "s" : ""}`,
+            onAction: confirmBulkGenerate,
+            disabled: pickListLoading,
+          }}
+          secondaryActions={[{ content: "Annuler", onAction: () => setConfirmOpen(false) }]}
+        >
+          {pickListLoading ? (
+            <Modal.Section>
+              <InlineStack align="center"><Spinner size="small" /></InlineStack>
+            </Modal.Section>
+          ) : (
+            <>
+              <Modal.Section>
+                {pickListFetcher.data?.error ? (
+                  <Banner tone="warning">
+                    Impossible de charger la liste des articles ({pickListFetcher.data.error}). Vous pouvez quand même confirmer.
+                  </Banner>
+                ) : (
+                  <Text as="p" variant="bodyMd">
+                    {pickListFetcher.data?.totalQuantity ?? 0} article{(pickListFetcher.data?.totalQuantity ?? 0) > 1 ? "s" : ""} à préparer
+                    {" — "}{pickListFetcher.data?.items.length ?? 0} référence{(pickListFetcher.data?.items.length ?? 0) > 1 ? "s" : ""}
+                  </Text>
+                )}
+              </Modal.Section>
+              {(pickListFetcher.data?.items.length ?? 0) > 0 && (
+                <Modal.Section>
+                  <BlockStack gap="300">
+                    {pickListFetcher.data!.items.map((item) => (
+                      <InlineStack key={item.key} align="space-between" blockAlign="center" wrap={false} gap="400">
+                        <InlineStack gap="300" blockAlign="center" wrap={false}>
+                          <Thumbnail source={item.imageUrl ?? ImageIcon} alt={item.title} size="medium" />
+                          <BlockStack gap="050">
+                            <Text as="span" variant="bodyMd" fontWeight="semibold">{item.title}</Text>
+                            {item.variantTitle && <Text as="span" variant="bodySm">{item.variantTitle}</Text>}
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {item.sku ? `${item.sku} · ` : ""}{item.orderNumbers.join(", ")}
+                            </Text>
+                          </BlockStack>
+                        </InlineStack>
+                        <Text as="span" variant="headingLg">×{item.quantity}</Text>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                </Modal.Section>
+              )}
+            </>
+          )}
+        </Modal>
+
         <Card padding="0">
           <IndexTable
             resourceName={resourceName}
             itemCount={orders.length}
             selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
             onSelectionChange={handleSelectionChange}
-            bulkActions={[
+            promotedBulkActions={[
               {
                 content: "Générer les étiquettes sélectionnées",
-                onAction: handleBulkGenerate,
+                onAction: openBulkConfirm,
                 disabled: isBulkGenerating,
               },
             ]}
