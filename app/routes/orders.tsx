@@ -24,7 +24,7 @@ import { SearchIcon, ChevronRightIcon, ChevronDownIcon } from "@shopify/polaris-
 import { useLoaderData, useNavigate, useSearchParams, useFetcher, useRevalidator } from "react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Route } from "./+types/orders";
-import { getLocalOrders, getDistinctTags } from "~/services/orders.server";
+import { getLocalOrders, getDistinctTags, getOrderViewCounts, DEFAULT_ORDER_VIEW } from "~/services/orders.server";
 import type { SortBy, SortOrder, OrderView, ShippedSource } from "~/services/orders.server";
 import { isOrderOpen } from "~/lib/order-status";
 import { getTrackingUrl } from "~/lib/tracking";
@@ -35,9 +35,10 @@ export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const p = url.searchParams;
 
-  const [ordersResult, availableTags] = await Promise.all([
+  const view = parseView(p.get("view"));
+  const [ordersResult, availableTags, viewCounts] = await Promise.all([
     getLocalOrders(shop, {
-      view: (p.get("view") as OrderView | undefined) ?? undefined,
+      view,
       shippedSource: (p.get("source") as ShippedSource | undefined) || undefined,
       shippingMethod: p.get("method") ?? undefined,
       carrier: (p.get("carrier") as "colissimo" | "mondial_relay" | undefined) || undefined,
@@ -51,9 +52,19 @@ export async function loader({ request }: Route.LoaderArgs) {
       pageSize: 25,
     }),
     getDistinctTags(shop),
+    getOrderViewCounts(shop),
   ]);
 
-  return { ...ordersResult, availableTags };
+  return { ...ordersResult, availableTags, viewCounts, view };
+}
+
+const ORDER_VIEWS: OrderView[] = ["to_ship", "labeled", "not_handed", "shipped", "cancelled", "all"];
+
+// Pas de paramètre = onglet par défaut ("À expédier"). "none" = ancien identifiant de cet
+// onglet, gardé pour les liens/favoris existants.
+function parseView(raw: string | null): OrderView {
+  if (raw === "none") return "to_ship";
+  return ORDER_VIEWS.includes(raw as OrderView) ? (raw as OrderView) : DEFAULT_ORDER_VIEW;
 }
 
 interface RelayPoint {
@@ -89,12 +100,11 @@ function countryNameToCode(name?: string): string | undefined {
 }
 
 export default function OrdersPage() {
-  const { orders, total, page, totalPages, availableTags } = useLoaderData<typeof loader>();
+  const { orders, total, page, totalPages, availableTags, viewCounts, view } = useLoaderData<typeof loader>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const q = searchParams.get("q") ?? "";
-  const view = searchParams.get("view") ?? "";
   const tag = searchParams.get("tag") ?? "";
   const shippedSource = searchParams.get("source") ?? "";
   const carrierFilter = searchParams.get("carrier") ?? "";
@@ -158,23 +168,26 @@ export default function OrdersPage() {
     prevBulkState.current = bulkLabelFetcher.state;
   }, [bulkLabelFetcher.state]);
 
-  // Onglets de vue — remplacent l'ancien filtre "Statut" (unfulfilled/fulfilled) par une
-  // catégorisation qui distingue aussi "a une étiquette active"
-  const viewTabs = [
-    { id: "all", content: "Tous" },
-    { id: "none", content: "Rien" },
-    { id: "labeled", content: "Étiquette générée" },
-    { id: "shipped", content: "Expédiée" },
-    { id: "not_handed", content: "Non remis au transporteur" },
-  ];
-  const selectedTabIndex = Math.max(
-    0,
-    viewTabs.findIndex((t) => t.id === (view || "all"))
-  );
+  // Onglets dans l'ordre du flux de travail (voir OrderView dans orders.server.ts) —
+  // compteurs globaux, indépendants des filtres de recherche
+  const viewLabels: Record<OrderView, string> = {
+    to_ship: "À expédier",
+    labeled: "Étiquette prête",
+    not_handed: "Non remis au transporteur",
+    shipped: "Expédiées",
+    cancelled: "Annulées / clôturées",
+    all: "Toutes",
+  };
+  const viewTabs = ORDER_VIEWS.map((id) => ({
+    id,
+    content: viewLabels[id],
+    badge: id === "all" ? undefined : String(viewCounts[id]),
+  }));
+  const selectedTabIndex = Math.max(0, ORDER_VIEWS.indexOf(view));
   function handleTabSelect(index: number) {
-    const tabId = viewTabs[index].id;
-    // "source" n'a de sens que dans la vue Expédiée — on le retire en changeant d'onglet
-    goTo({ view: tabId === "all" ? "" : tabId, source: "", page: "1" });
+    const tabId = ORDER_VIEWS[index];
+    // "source" n'a de sens que dans la vue Expédiées — on le retire en changeant d'onglet
+    goTo({ view: tabId === DEFAULT_ORDER_VIEW ? "" : tabId, source: "", page: "1" });
   }
 
   // Autocomplete variante produit — connecté au catalogue Shopify (pas notre catalogue local

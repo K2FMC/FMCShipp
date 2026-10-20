@@ -304,14 +304,44 @@ export async function syncShopifyOrders(
 export type SortBy = "createdAt" | "orderNumber" | "customerName" | "totalPrice";
 export type SortOrder = "asc" | "desc";
 
-// 3 vues mutuellement exclusives — remplace l'ancien filtre "status" (unfulfilled/fulfilled)
-// par une catégorisation qui distingue aussi "a une étiquette active" :
-// - "none"    : rien fait — pas d'étiquette active, pas expédiée
-// - "labeled" : étiquette générée mais pas encore marquée expédiée
-// - "shipped" : marquée expédiée (fulfillmentStatus === "fulfilled")
-// + "not_handed" (transverse, pas exclusive) : colis expédié jamais scanné par le
+// Onglets de la liste, dans l'ordre du flux de travail. Les 4 premiers états sont
+// mutuellement exclusifs et couvrent toutes les commandes :
+// - "to_ship"   : à traiter — ouverte, pas expédiée, pas d'étiquette active
+// - "labeled"   : étiquette générée, pas encore marquée expédiée (à fulfill / à déposer)
+// - "shipped"   : marquée expédiée (fulfillmentStatus === "fulfilled")
+// - "cancelled" : jamais expédiée et annulée ou clôturée dans Shopify (remboursée, archivée…)
+// + "not_handed" (transverse, sous-ensemble de "shipped") : colis expédié jamais scanné par le
 //   transporteur passé 24h ouvrées — voir app/services/handover.server.ts
-export type OrderView = "none" | "labeled" | "shipped" | "not_handed";
+// + "all" : aucune restriction
+export type OrderView = "to_ship" | "labeled" | "not_handed" | "shipped" | "cancelled" | "all";
+
+export const DEFAULT_ORDER_VIEW: OrderView = "to_ship";
+
+const hasActiveLabel = { labels: { some: { status: { not: "cancelled" } } } };
+const noActiveLabel = { labels: { none: { status: { not: "cancelled" } } } };
+const openNotShipped = { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null };
+
+export function orderViewWhere(view: OrderView) {
+  switch (view) {
+    case "to_ship": return { ...openNotShipped, ...noActiveLabel };
+    case "labeled": return { ...openNotShipped, ...hasActiveLabel };
+    case "shipped": return { fulfillmentStatus: "fulfilled" };
+    // AND (pas OR à la racine) : la recherche texte de getLocalOrders pose déjà son propre OR
+    case "cancelled": return { fulfillmentStatus: { not: "fulfilled" }, AND: [{ OR: [{ cancelledAt: { not: null } }, { closedAt: { not: null } }] }] };
+    case "not_handed": return { cancelledAt: null, fulfillments: { some: overdueFulfillmentWhere() } };
+    case "all": return {};
+  }
+}
+
+// Compteurs des onglets — indépendants des autres filtres (recherche, transporteur…) : ils
+// indiquent la charge de travail globale par étape.
+export async function getOrderViewCounts(shop: string): Promise<Record<OrderView, number>> {
+  const views: OrderView[] = ["to_ship", "labeled", "not_handed", "shipped", "cancelled", "all"];
+  const counts = await Promise.all(
+    views.map((v) => prisma.order.count({ where: { shop, ...orderViewWhere(v) } }))
+  );
+  return Object.fromEntries(views.map((v, i) => [v, counts[i]])) as Record<OrderView, number>;
+}
 
 // Sous-filtre de la vue "shipped" — qui a géré l'expédition :
 // - "app"      : expédiée via cette app (au moins une étiquette active générée ici — les
@@ -346,7 +376,7 @@ function jsonStringValue(s: string): string {
 
 export async function getLocalOrders(shop: string, options: OrderQueryOptions = {}) {
   const {
-    view,
+    view = DEFAULT_ORDER_VIEW,
     shippedSource,
     shippingMethod,
     carrier,
@@ -360,8 +390,6 @@ export async function getLocalOrders(shop: string, options: OrderQueryOptions = 
     pageSize = 25,
   } = options;
 
-  const hasActiveLabel = { labels: { some: { status: { not: "cancelled" } } } };
-  const noActiveLabel = { labels: { none: { status: { not: "cancelled" } } } };
 
   // Même heuristique que partout ailleurs dans le repo (orders.tsx, orders.$id.tsx,
   // orders.server.ts sync) : pas de champ "carrier" normalisé en base, le transporteur se
@@ -371,12 +399,9 @@ export async function getLocalOrders(shop: string, options: OrderQueryOptions = 
 
   const where = {
     shop,
-    ...(view === "shipped" ? { fulfillmentStatus: "fulfilled" } : {}),
+    ...orderViewWhere(view),
     ...(view === "shipped" && shippedSource === "app" ? hasActiveLabel : {}),
     ...(view === "shipped" && shippedSource === "external" ? noActiveLabel : {}),
-    ...(view === "labeled" ? { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null, ...hasActiveLabel } : {}),
-    ...(view === "none" ? { fulfillmentStatus: { not: "fulfilled" }, cancelledAt: null, closedAt: null, ...noActiveLabel } : {}),
-    ...(view === "not_handed" ? { cancelledAt: null, fulfillments: { some: overdueFulfillmentWhere() } } : {}),
     ...(shippingMethod ? { shippingMethod } : {}),
     ...(carrier === "mondial_relay" ? mondialRelayFilter : {}),
     ...(carrier === "colissimo" ? { NOT: mondialRelayFilter } : {}),
