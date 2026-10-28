@@ -212,7 +212,7 @@ export default function OrderDetail() {
   const [relayPoints, setRelayPoints] = useState<RelayPoint[]>([]);
   const [relayModalOpen, setRelayModalOpen] = useState(false);
   const [labelModalOpen, setLabelModalOpen] = useState(false);
-  const [activeDocTab, setActiveDocTab] = useState(0); // 0 = étiquette, 1 = CN23
+  const [activeDocTab, setActiveDocTab] = useState(0); // index dans docTabs
   const [batchModalPdf, setBatchModalPdf] = useState<string | null>(null);
   const relayFetcher = useFetcher<{ points: RelayPoint[] }>();
 
@@ -348,17 +348,25 @@ export default function OrderDetail() {
   const labelPdfRoute = displayLabelId && !displayLabelData ? `/api/labels/${displayLabelId}/pdf` : null;
 
   const hasCn23 = Boolean(displayCn23Data);
+  // Avec une CN23, l'onglet par défaut regroupe bordereau + CN23 en un seul PDF (servi par
+  // /api/labels/:id/pdf?doc=all) pour tout imprimer d'un coup depuis l'aperçu.
   const docTabs = hasCn23
     ? [
+        { id: "all", content: "Bordereau + CN23" },
         { id: "label", content: "Bordereau" },
         { id: "cn23", content: "CN23" },
       ]
     : [{ id: "label", content: "Bordereau" }];
-  const isCn23Tab = hasCn23 && activeDocTab === 1;
-  const activeDocData = isCn23Tab ? displayCn23Data : displayLabelData;
-  const activeDocFilename = isCn23Tab
-    ? `cn23-${order.orderNumber}.pdf`
-    : `etiquette-${order.orderNumber}.pdf`;
+  const activeDocKey = docTabs[activeDocTab]?.id ?? "label";
+  const isCn23Tab = activeDocKey === "cn23";
+  const isAllTab = activeDocKey === "all";
+  const allDocsRoute = displayLabelId ? `/api/labels/${displayLabelId}/pdf?doc=all` : null;
+  const activeDocData = isAllTab ? null : isCn23Tab ? displayCn23Data : displayLabelData;
+  const activeDocFilename = isAllTab
+    ? `etiquette-cn23-${order.orderNumber}.pdf`
+    : isCn23Tab
+      ? `cn23-${order.orderNumber}.pdf`
+      : `etiquette-${order.orderNumber}.pdf`;
 
   // Ouvre automatiquement la modale dès qu'une étiquette est générée
   useEffect(() => {
@@ -981,9 +989,11 @@ export default function OrderDetail() {
           onAction: () => {
             const link = document.createElement("a");
             link.href =
-              !activeDocData && !isCn23Tab && labelPdfRoute
-                ? `${labelPdfRoute}?download=1`
-                : `data:application/pdf;base64,${activeDocData}`;
+              isAllTab && allDocsRoute
+                ? `${allDocsRoute}&download=1`
+                : !activeDocData && !isCn23Tab && labelPdfRoute
+                  ? `${labelPdfRoute}?download=1`
+                  : `data:application/pdf;base64,${activeDocData}`;
             link.download = activeDocFilename;
             document.body.appendChild(link);
             link.click();
@@ -998,7 +1008,14 @@ export default function OrderDetail() {
           </Modal.Section>
         )}
         <Modal.Section flush>
-          {activeDocData ? (
+          {isAllTab && allDocsRoute ? (
+            <iframe
+              key={allDocsRoute}
+              src={allDocsRoute}
+              style={{ width: "100%", height: "560px", border: "none", display: "block" }}
+              title="Aperçu bordereau + CN23"
+            />
+          ) : activeDocData ? (
             <iframe
               key={`${activeDocFilename}-${displayTrackingNumber ?? ""}`}
               src={`data:application/pdf;base64,${activeDocData}`}

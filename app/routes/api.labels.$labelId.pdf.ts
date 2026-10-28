@@ -1,4 +1,5 @@
 import type { Route } from "./+types/api.labels.$labelId.pdf";
+import { PDFDocument } from "pdf-lib";
 import { prisma } from "~/lib/db.server";
 
 // Sert le PDF d'UNE étiquette, quel que soit le transporteur — permet d'accéder à l'étiquette
@@ -7,11 +8,14 @@ import { prisma } from "~/lib/db.server";
 // - Colissimo : labelData / cn23Data stockés en base64
 // - Mondial Relay : PDF distant (labelUrl) — proxifié ici plutôt que lié directement, pour
 //   l'afficher dans la même iframe/le même téléchargement que Colissimo
-// ?doc=cn23 → CN23 au lieu du bordereau ; ?download=1 → force le téléchargement.
+// ?doc=cn23 → CN23 au lieu du bordereau ; ?doc=all → bordereau + CN23 dans un seul PDF
+// (pour tout imprimer d'un coup) ; ?download=1 → force le téléchargement.
 export async function loader({ params, request }: Route.LoaderArgs) {
   const shop = process.env.SHOPIFY_STORE!;
   const url = new URL(request.url);
-  const isCn23 = url.searchParams.get("doc") === "cn23";
+  const doc = url.searchParams.get("doc");
+  const isCn23 = doc === "cn23";
+  const isAll = doc === "all";
   const download = url.searchParams.get("download") === "1";
 
   const label = await prisma.label.findFirst({
@@ -21,7 +25,17 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   if (!label) return new Response("Étiquette introuvable", { status: 404 });
 
   let pdf: Uint8Array<ArrayBuffer> | null = null;
-  if (isCn23) {
+  if (isAll) {
+    if (label.labelData && label.cn23Data) {
+      const merged = await PDFDocument.create();
+      for (const part of [label.labelData, label.cn23Data]) {
+        const src = await PDFDocument.load(Buffer.from(part, "base64"));
+        const pages = await merged.copyPages(src, src.getPageIndices());
+        pages.forEach((p) => merged.addPage(p));
+      }
+      pdf = new Uint8Array(await merged.save());
+    }
+  } else if (isCn23) {
     if (label.cn23Data) pdf = new Uint8Array(Buffer.from(label.cn23Data, "base64"));
   } else if (label.labelData) {
     pdf = new Uint8Array(Buffer.from(label.labelData, "base64"));
@@ -37,7 +51,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   if (!pdf) return new Response("Aucun PDF disponible pour ce document", { status: 404 });
 
   const orderNumber = label.order.orderNumber.replace(/[^\w-]/g, "");
-  const filename = `${isCn23 ? "cn23" : "etiquette"}-${orderNumber}.pdf`;
+  const filename = `${isAll ? "etiquette-cn23" : isCn23 ? "cn23" : "etiquette"}-${orderNumber}.pdf`;
 
   return new Response(pdf, {
     headers: {
